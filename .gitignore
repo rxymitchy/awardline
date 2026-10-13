@@ -1,0 +1,12 @@
+.venv/
+.wheels/
+node_modules/
+__pycache__/
+.pytest_cache/
+*.pyc
+runtime/
+logs/
+filings/
+data/raw/
+data/ppip-*.json
+evals/results.json

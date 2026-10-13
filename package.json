@@ -1,0 +1,8 @@
+{
+  "name": "awardline",
+  "private": true,
+  "description": "Borrowed MCP server used only to file committee notes.",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "1.0.0"
+  }
+}
