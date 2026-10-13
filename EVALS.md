@@ -25,3 +25,5 @@ Next attempt: strip `ltd`, `limited`, and `company` before comparing, then check
 ## Agent recovery
 
 `tests/test_tasks.py` also runs the LangGraph loop against a scripted model. The model calls a tool that does not exist, then calls `search_awards` with no buyer and no description, then stops. Both errors are returned to the model. That test passes.
+
+On the first live run, Qwen 2.5 3B searched the right purchase and then passed KES 200,000 for a KES 2,000,000 quote. The graph now returns that mismatch and asks for the amount in the request. A scripted test covers that refusal. The next live run copied KES 2,000,000.00, flagged it at 2.74 times the median of 12 published awards, and stopped before filing.

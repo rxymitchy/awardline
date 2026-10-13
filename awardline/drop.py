@@ -4,7 +4,7 @@ import asyncio
 import os
 from pathlib import Path
 
-from awardline.audit import log_call
+from awardline.audit import caller, log_call
 from awardline.paths import FILINGS, ROOT, ensure_runtime
 
 
@@ -78,7 +78,7 @@ def file_committee_note(note_id: str) -> dict:
     inputs = {"note_id": note_id}
     if draft is None:
         result = {"ok": False, "error": "No draft to file."}
-        log_call("agent", "file_committee_note", inputs, result, False)
+        log_call(caller(), "file_committee_note", inputs, result, False)
         return result
     if approval is None or approval.get("decision") != "approve":
         result = {
@@ -86,13 +86,13 @@ def file_committee_note(note_id: str) -> dict:
             "error": "Officer approval required before this note can be filed.",
             "note_id": note_id,
         }
-        log_call("agent", "file_committee_note", inputs, result, False)
+        log_call(caller(), "file_committee_note", inputs, result, False)
         return result
     try:
         path = write_committee_file(f"{note_id}.md", draft["text"])
     except Exception as exc:
         result = {"ok": False, "error": f"Filesystem MCP write failed: {exc}", "note_id": note_id}
-        log_call("agent", "file_committee_note", inputs, result, False)
+        log_call(caller(), "file_committee_note", inputs, result, False)
         return result
     result = {
         "ok": True,
@@ -101,5 +101,5 @@ def file_committee_note(note_id: str) -> dict:
         "officer": approval["officer"],
         "approved_at": approval["approved_at"],
     }
-    log_call("agent", "file_committee_note", inputs, result, True)
+    log_call(caller(), "file_committee_note", inputs, result, True)
     return result

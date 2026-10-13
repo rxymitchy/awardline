@@ -56,6 +56,46 @@ def test_file_without_officer_writes_nothing(tmp_path: Path, monkeypatch):
     assert list(tmp_path.glob("*.md")) == []
 
 
+def test_a_changed_quote_is_sent_back_to_the_model():
+    class Once:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "name": "flag_price_outlier",
+                            "arguments": {"buyer": "Kitui", "query": "fuel", "amount": 200000},
+                        }
+                    ],
+                }
+            return {"role": "assistant", "content": "stopped", "tool_calls": []}
+
+    result = build_graph(Once()).invoke(
+        {
+            "messages": [{"role": "user", "content": "Quote of KES 2,000,000.00 for fuel."}],
+            "steps": 0,
+        }
+    )
+    tool_messages = [message for message in result["messages"] if message["role"] == "tool"]
+    payload = json.loads(tool_messages[0]["content"])
+    assert payload["ok"] is False
+    assert "2,000,000.00" in payload["error"]
+
+
+def test_live_agent_calls_the_mcp_server():
+    from awardline.agent import call_awardline_tool
+
+    result = call_awardline_tool("search_awards", {"buyer": "", "query": ""})
+    assert result["ok"] is False
+    assert "buyer" in result["error"].lower()
+
+
 def test_agent_recovers_from_an_unknown_tool():
     replies = [
         {"role": "assistant", "content": "", "tool_calls": [{"name": "award_tender", "arguments": {}}]},

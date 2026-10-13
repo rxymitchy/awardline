@@ -2,7 +2,7 @@ import json
 import re
 from hashlib import sha256
 
-from awardline.audit import log_call
+from awardline.audit import caller, log_call
 from awardline.awards import load_snapshot, search_awards
 from awardline.paths import APPROVALS, DRAFTS, FLAGS, ensure_runtime
 from awardline.score import flag_price_outlier
@@ -22,7 +22,7 @@ def _read_json(path) -> dict | None:
 
 def tool_search_awards(buyer: str = "", query: str = "", limit: int = 8) -> dict:
     result = search_awards(buyer=buyer, query=query, limit=limit)
-    log_call("agent", "search_awards", {"buyer": buyer, "query": query, "limit": limit}, result, result["ok"])
+    log_call(caller(), "search_awards", {"buyer": buyer, "query": query, "limit": limit}, result, result["ok"])
     return result
 
 
@@ -32,7 +32,7 @@ def tool_flag_price_outlier(buyer: str, query: str, amount: float, currency: str
         amount_f = float(amount)
     except (TypeError, ValueError):
         result = {"ok": False, "error": "amount must be a number"}
-        log_call("agent", "flag_price_outlier", {"buyer": buyer, "query": query, "amount": amount}, result, False)
+        log_call(caller(), "flag_price_outlier", {"buyer": buyer, "query": query, "amount": amount}, result, False)
         return result
     finding = flag_price_outlier(list(load_snapshot()), buyer, query, amount_f, currency or "KES")
     note_id = _key(buyer, query, amount_f, currency or "KES")
@@ -41,7 +41,7 @@ def tool_flag_price_outlier(buyer: str, query: str, amount: float, currency: str
     path.write_text(json.dumps(finding, ensure_ascii=False, indent=2), encoding="utf-8")
     finding["flag_path"] = str(path)
     log_call(
-        "agent",
+        caller(),
         "flag_price_outlier",
         {"buyer": buyer, "query": query, "amount": amount_f, "currency": currency},
         finding,
@@ -56,7 +56,7 @@ def tool_draft_committee_note(buyer: str, query: str, amount: float, currency: s
         amount_f = float(amount)
     except (TypeError, ValueError):
         result = {"ok": False, "error": "amount must be a number"}
-        log_call("agent", "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount}, result, False)
+        log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount}, result, False)
         return result
     note_id = _key(buyer, query, amount_f, currency or "KES")
     finding = _read_json(FLAGS / f"{note_id}.json")
@@ -66,14 +66,14 @@ def tool_draft_committee_note(buyer: str, query: str, amount: float, currency: s
             "error": "No flag exists for this quote. Call flag_price_outlier before drafting.",
             "note_id": note_id,
         }
-        log_call("agent", "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f}, result, False)
+        log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f}, result, False)
         return result
     text = render_note(finding)
     draft = {"note_id": note_id, "text": text, "finding": finding}
     path = DRAFTS / f"{note_id}.json"
     path.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"ok": True, "note_id": note_id, "text": text, "filed": False}
-    log_call("agent", "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f}, result, True)
+    log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f}, result, True)
     return result
 
 

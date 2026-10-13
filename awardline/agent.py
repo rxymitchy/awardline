@@ -1,8 +1,11 @@
 """LangGraph agent. The model picks tools. The graph retries when a tool returns an error."""
 
+import asyncio
 import json
 import os
-from typing import Any, TypedDict
+import re
+import sys
+from typing import Any, Callable, TypedDict
 
 import httpx
 from langgraph.graph import END, START, StateGraph
@@ -87,6 +90,7 @@ Plan, then call tools:
 4. draft_committee_note with the same buyer, query, and amount.
 5. Stop when the draft is ready. You may try file_committee_note, and if it refuses, stop and say the officer must approve.
 Every finding must come from tool output.
+Copy the quoted amount exactly. Do not round it or drop a zero.
 """
 
 DISPATCH = {
@@ -111,6 +115,25 @@ DISPATCH = {
 }
 
 
+def _tool_calls_from_text(content: str) -> list[dict]:
+    """Recover a tool call when a small model writes JSON instead of using the tool channel."""
+    start = content.find("{")
+    end = content.rfind("}")
+    if start < 0 or end <= start:
+        return []
+    try:
+        payload = json.loads(content[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    name = payload.get("name") or payload.get("tool")
+    if name not in DISPATCH:
+        return []
+    arguments = payload.get("arguments") or payload.get("parameters") or {}
+    if not isinstance(arguments, dict):
+        return []
+    return [{"name": name, "arguments": arguments}]
+
+
 class OllamaModel:
     def __init__(self, model: str = MODEL, base_url: str = OLLAMA):
         self.model = model
@@ -124,6 +147,7 @@ class OllamaModel:
         )
         response.raise_for_status()
         message = response.json()["message"]
+        content = message.get("content") or ""
         tool_calls = []
         for call in message.get("tool_calls") or []:
             function = call.get("function") or {}
@@ -133,7 +157,9 @@ class OllamaModel:
                     "arguments": function.get("arguments") or {},
                 }
             )
-        return {"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls}
+        if not tool_calls:
+            tool_calls = _tool_calls_from_text(content)
+        return {"role": "assistant", "content": content, "tool_calls": tool_calls}
 
 
 class AgentState(TypedDict):
@@ -141,7 +167,97 @@ class AgentState(TypedDict):
     steps: int
 
 
-def build_graph(model: Any):
+def call_awardline_tool(name: str, arguments: dict) -> dict:
+    """Call one tool on the Awardline MCP server over stdio."""
+
+    async def _call() -> dict:
+        from mcp import ClientSession, StdioServerParameters
+        from mcp.client.stdio import stdio_client
+
+        env = os.environ.copy()
+        env["AWARDLINE_ACTOR"] = "mcp"
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "awardline.server"],
+            env=env,
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(name, arguments)
+        if getattr(result, "isError", False):
+            return {"ok": False, "error": _tool_text(result) or f"{name} failed"}
+        text = _tool_text(result)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"ok": False, "error": text or f"{name} returned nothing"}
+        return parsed if isinstance(parsed, dict) else {"ok": True, "result": parsed}
+
+    return asyncio.run(_call())
+
+
+def _tool_text(result) -> str:
+    parts = []
+    for block in getattr(result, "content", []) or []:
+        text = getattr(block, "text", None)
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
+
+
+_KES_AMOUNT = re.compile(r"KES\s*([0-9][0-9,]*(?:\.[0-9]+)?)", re.IGNORECASE)
+_AMOUNT_TOOLS = {"flag_price_outlier", "draft_committee_note"}
+
+
+def _stated_quotes(messages: list[dict]) -> list[float]:
+    amounts = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        for match in _KES_AMOUNT.finditer(message.get("content") or ""):
+            amounts.append(float(match.group(1).replace(",", "")))
+    return amounts
+
+
+def _quoted_amount_error(name: str, arguments: dict, messages: list[dict]) -> dict | None:
+    if name not in _AMOUNT_TOOLS:
+        return None
+    quotes = _stated_quotes(messages)
+    if not quotes:
+        return None
+    try:
+        passed = float(arguments.get("amount"))
+    except (TypeError, ValueError):
+        passed = None
+    if passed is not None and any(abs(passed - quote) <= max(1.0, quote * 0.001) for quote in quotes):
+        return None
+    shown = ", ".join(f"{quote:,.2f}" for quote in quotes)
+    return {
+        "ok": False,
+        "error": (
+            f"The request quotes KES {shown}. Call {name} again with that amount. "
+            "Do not round it or drop a zero."
+        ),
+    }
+
+
+def _run_tool(name: str, arguments: dict, call_tool: Callable[[str, dict], dict] | None) -> dict:
+    if call_tool is not None:
+        try:
+            return call_tool(name, arguments)
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+    handler = DISPATCH.get(name)
+    if handler is None:
+        return {"ok": False, "error": f"Unknown tool {name}. Use one of {list(DISPATCH)}."}
+    try:
+        return handler(arguments)
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None):
     def plan(state: dict) -> dict:
         messages = state["messages"]
         try:
@@ -165,14 +281,9 @@ def build_graph(model: Any):
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError:
                     arguments = {}
-            handler = DISPATCH.get(name)
-            if handler is None:
-                result = {"ok": False, "error": f"Unknown tool {name}. Use one of {list(DISPATCH)}."}
-            else:
-                try:
-                    result = handler(arguments)
-                except Exception as exc:
-                    result = {"ok": False, "error": str(exc)}
+            result = _quoted_amount_error(name, arguments, state["messages"])
+            if result is None:
+                result = _run_tool(name, arguments, call_tool)
             followups.append(
                 {
                     "role": "tool",
@@ -201,7 +312,7 @@ def build_graph(model: Any):
 
 def run_agent(task: str, model: Any | None = None) -> dict:
     chosen = model or OllamaModel()
-    graph = build_graph(chosen)
+    graph = build_graph(chosen, call_awardline_tool)
     state = graph.invoke(
         {
             "messages": [

@@ -4,7 +4,7 @@ Awardline is a LangGraph loop in front of two MCP servers. Qwen 2.5 3B, via Olla
 
 ## Agent
 
-`awardline/agent.py` compiles a two-node graph. `plan` calls the model with the tool list. `tools` runs whatever the model named and appends the result, including errors. The graph goes back to `plan` until the model stops or eight steps pass. An unknown tool name and an empty search both come back as errors so the model can try again. The model is told to stop when the draft exists, and that filing will be refused until an officer approves.
+`awardline/agent.py` compiles a two-node graph. `plan` calls Qwen with the tool list. `tools` sends each call to the Awardline MCP server over stdio and appends the result, including errors. The graph goes back to `plan` until the model stops or eight steps pass. An unknown tool name, an empty search, and a quoted amount that does not match the request all come back as errors so the model can try again. Tool calls made through the server are logged with `"actor": "mcp"`. The model is told to stop when the draft exists, and that filing will be refused until an officer approves.
 
 ## MCP server we wrote
 
