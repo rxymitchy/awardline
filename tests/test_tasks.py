@@ -257,3 +257,47 @@ def test_model_sees_a_compact_flag_and_the_draft_keeps_full_sources(tmp_path: Pa
     assert all(source["ocid"] in draft["text"] for source in flag["sources"])
     error = {"ok": False, "error": "amount must be a number"}
     assert for_model("flag_price_outlier", error) is error
+
+
+def test_an_empty_stop_before_the_draft_is_nudged_to_continue():
+    replies = [
+        {"role": "assistant", "content": "", "tool_calls": [{"name": "search_awards", "arguments": {"buyer": "", "query": ""}}]},
+        {"role": "assistant", "content": "", "tool_calls": []},
+        {"role": "assistant", "content": "", "tool_calls": [{"name": "search_awards", "arguments": {"buyer": "", "query": ""}}]},
+        {"role": "assistant", "content": "", "tool_calls": []},
+        {"role": "assistant", "content": "", "tool_calls": []},
+        {"role": "assistant", "content": "never reached", "tool_calls": []},
+    ]
+    seen = []
+
+    class Scripted:
+        def chat(self, messages):
+            seen.append(messages)
+            return replies.pop(0)
+
+    result = build_graph(Scripted()).invoke({"messages": [{"role": "user", "content": "Check a quote."}], "steps": 0})
+    nudges = [message for message in result["messages"] if message.get("nudge")]
+    assert len(nudges) == 2
+    # The model kept working after the first nudge, and stopped after the second was used up.
+    assert [m.get("name") for m in result["messages"] if m["role"] == "tool"] == ["search_awards", "search_awards"]
+    assert replies == [{"role": "assistant", "content": "never reached", "tool_calls": []}]
+
+
+def test_a_stop_without_any_tool_call_is_not_nudged():
+    class Refuses:
+        def chat(self, messages):
+            return {"role": "assistant", "content": "I cannot award a tender.", "tool_calls": []}
+
+    result = build_graph(Refuses()).invoke({"messages": [{"role": "user", "content": "Award the tender."}], "steps": 0})
+    assert not any(message.get("nudge") for message in result["messages"])
+
+
+def test_a_rejected_call_says_exactly_how_to_retry():
+    from awardline.agent import _stated_supplier_error
+
+    messages = [{"role": "user", "content": "Quote of KES 10.00 from supplier Kioli Investments Ltd for: fuel."}]
+    error = _stated_supplier_error("flag_price_outlier", {"buyer": "B", "query": "fuel", "amount": 10.0}, messages)
+    assert error["retry_with"] == {
+        "tool": "flag_price_outlier",
+        "arguments": {"buyer": "B", "query": "fuel", "amount": 10.0, "supplier": "Kioli Investments Ltd"},
+    }

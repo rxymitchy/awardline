@@ -17,6 +17,12 @@ from awardline.notes import tool_draft_committee_note, tool_flag_price_outlier, 
 MODEL = os.environ.get("AWARDLINE_MODEL", "qwen2.5:3b")
 OLLAMA = os.environ.get("AWARDLINE_OLLAMA", "http://127.0.0.1:11434")
 MAX_STEPS = 8
+MAX_NUDGES = 2
+NUDGE = (
+    "No committee note has been drafted yet. Continue with the next tool call: "
+    "fix the last call if a tool returned an error (use retry_with when it is given), "
+    "otherwise call flag_price_outlier, then draft_committee_note."
+)
 
 TOOLS = [
     {
@@ -141,7 +147,7 @@ def _tool_calls_from_text(content: str) -> list[dict]:
 
 def _wire(message: dict) -> dict:
     """The fields Ollama needs. The full tool result kept under "result" stays local."""
-    return {key: value for key, value in message.items() if key != "result"}
+    return {key: value for key, value in message.items() if key not in ("result", "nudge")}
 
 
 _SEARCH_FIELDS = ("ocid", "buyer", "title", "supplier", "amount", "date")
@@ -288,12 +294,14 @@ def _quoted_amount_error(name: str, arguments: dict, messages: list[dict]) -> di
     if passed is not None and any(abs(passed - quote) <= max(1.0, quote * 0.001) for quote in quotes):
         return None
     shown = ", ".join(f"{quote:,.2f}" for quote in quotes)
+    corrected = {**arguments, "amount": quotes[0]}
     return {
         "ok": False,
         "error": (
             f"The request quotes KES {shown}. Call {name} again with that amount. "
             "Do not round it or drop a zero."
         ),
+        "retry_with": {"tool": name, "arguments": corrected},
     }
 
 
@@ -322,12 +330,14 @@ def _stated_supplier_error(name: str, arguments: dict, messages: list[dict]) -> 
     passed = str(arguments.get("supplier") or "")
     if any(same_supplier(passed, supplier) for supplier in stated):
         return None
+    corrected = {**arguments, "supplier": stated[0]}
     return {
         "ok": False,
         "error": (
             f"The request names the quoting supplier {stated[0]}. "
             f"Call {name} again with supplier set to \"{stated[0]}\"."
         ),
+        "retry_with": {"tool": name, "arguments": corrected},
     }
 
 
@@ -344,6 +354,23 @@ def _run_tool(name: str, arguments: dict, call_tool: Callable[[str, dict], dict]
         return handler(arguments)
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def _needs_nudge(messages: list[dict]) -> bool:
+    """True when the model stopped before any draft exists and has nudges left.
+
+    Only runs that already called a tool are nudged: a model that answers a request
+    without trying any tool (for example, one asking it to award a tender) may stop.
+    """
+    if not any(message.get("role") == "tool" for message in messages):
+        return False
+    for message in messages:
+        if message.get("role") == "tool" and message.get("name") == "draft_committee_note":
+            payload = message.get("result") or {}
+            if payload.get("ok"):
+                return False
+    used = sum(1 for message in messages if message.get("nudge"))
+    return used < MAX_NUDGES
 
 
 def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None):
@@ -385,20 +412,27 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
             )
         return {"messages": state["messages"] + followups}
 
+    def nudge(state: dict) -> dict:
+        return {"messages": state["messages"] + [{"role": "user", "content": NUDGE, "nudge": True}]}
+
     def route(state: dict) -> str:
         last = state["messages"][-1]
         if state["steps"] >= MAX_STEPS:
             return "end"
         if last.get("role") == "assistant" and last.get("tool_calls"):
             return "tools"
+        if _needs_nudge(state["messages"]):
+            return "nudge"
         return "end"
 
     graph = StateGraph(AgentState)
     graph.add_node("plan", plan)
     graph.add_node("tools", tools)
+    graph.add_node("nudge", nudge)
     graph.add_edge(START, "plan")
-    graph.add_conditional_edges("plan", route, {"tools": "tools", "end": END})
+    graph.add_conditional_edges("plan", route, {"tools": "tools", "nudge": "nudge", "end": END})
     graph.add_edge("tools", "plan")
+    graph.add_edge("nudge", "plan")
     return graph.compile()
 
 
