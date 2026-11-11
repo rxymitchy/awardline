@@ -10,6 +10,7 @@ from typing import Any, Callable, TypedDict
 import httpx
 from langgraph.graph import END, START, StateGraph
 
+from awardline.awards import same_supplier
 from awardline.drop import file_committee_note
 from awardline.notes import tool_draft_committee_note, tool_flag_price_outlier, tool_search_awards
 
@@ -45,6 +46,7 @@ TOOLS = [
                     "query": {"type": "string"},
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
+                    "supplier": {"type": "string", "description": "The quoting supplier, if the request names one."},
                 },
                 "required": ["buyer", "query", "amount"],
             },
@@ -62,6 +64,7 @@ TOOLS = [
                     "query": {"type": "string"},
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
+                    "supplier": {"type": "string", "description": "The quoting supplier, if the request names one."},
                 },
                 "required": ["buyer", "query", "amount"],
             },
@@ -86,8 +89,8 @@ Use published award records only. Never award a tender. Never invent an OCID or 
 Plan, then call tools:
 1. search_awards for the buyer and the purchase.
 2. If the search is empty, change the query and search again. Do not flag without records.
-3. flag_price_outlier with the quoted amount.
-4. draft_committee_note with the same buyer, query, and amount.
+3. flag_price_outlier with the quoted amount. If the request names the quoting supplier, pass it as supplier.
+4. draft_committee_note with the same buyer, query, amount, and supplier.
 5. Stop when the draft is ready. You may try file_committee_note, and if it refuses, stop and say the officer must approve.
 Every finding must come from tool output.
 Copy the quoted amount exactly. Do not round it or drop a zero.
@@ -104,12 +107,14 @@ DISPATCH = {
         query=args.get("query", ""),
         amount=args.get("amount"),
         currency=args.get("currency") or "KES",
+        supplier=args.get("supplier") or "",
     ),
     "draft_committee_note": lambda args: tool_draft_committee_note(
         buyer=args.get("buyer", ""),
         query=args.get("query", ""),
         amount=args.get("amount"),
         currency=args.get("currency") or "KES",
+        supplier=args.get("supplier") or "",
     ),
     "file_committee_note": lambda args: file_committee_note(args.get("note_id", "")),
 }
@@ -134,6 +139,56 @@ def _tool_calls_from_text(content: str) -> list[dict]:
     return [{"name": name, "arguments": arguments}]
 
 
+def _wire(message: dict) -> dict:
+    """The fields Ollama needs. The full tool result kept under "result" stays local."""
+    return {key: value for key, value in message.items() if key != "result"}
+
+
+_SEARCH_FIELDS = ("ocid", "buyer", "title", "supplier", "amount", "date")
+
+
+def for_model(name: str, result: dict) -> dict:
+    """A compact view of a tool result for the model's context window.
+
+    Qwen 2.5 3B runs with a 4,096-token context. The full flag and draft carry every
+    source, the matched words, and the supplier history; the model needs none of that
+    to choose its next step, because the draft is built from the saved flag, not from
+    model text. Errors are passed through unchanged so the model can correct itself.
+    """
+    if not isinstance(result, dict) or not result.get("ok"):
+        return result
+    if name == "search_awards":
+        return {
+            "ok": True,
+            "count": result.get("count"),
+            "awards": [{field: row.get(field) for field in _SEARCH_FIELDS} for row in result.get("awards") or []],
+        }
+    if name == "flag_price_outlier":
+        history = result.get("supplier_history") or {}
+        return {
+            "ok": True,
+            "note_id": result.get("note_id"),
+            "flagged": result.get("flagged"),
+            "reason": result.get("reason"),
+            "amount": result.get("amount"),
+            "median": result.get("median"),
+            "ratio": result.get("ratio"),
+            "comparable_count": result.get("comparable_count"),
+            "supplier": result.get("supplier"),
+            "supplier_past_awards": history.get("award_count"),
+            "next": "Call draft_committee_note with the same buyer, query, amount, and supplier.",
+        }
+    if name == "draft_committee_note":
+        return {
+            "ok": True,
+            "note_id": result.get("note_id"),
+            "revision": result.get("revision"),
+            "filed": False,
+            "next": "The draft is ready. Stop. Filing needs a named officer's approval.",
+        }
+    return result
+
+
 class OllamaModel:
     def __init__(self, model: str = MODEL, base_url: str = OLLAMA):
         self.model = model
@@ -142,7 +197,7 @@ class OllamaModel:
     def chat(self, messages: list[dict]) -> dict:
         response = httpx.post(
             f"{self.base_url}/api/chat",
-            json={"model": self.model, "messages": messages, "tools": TOOLS, "stream": False},
+            json={"model": self.model, "messages": [_wire(message) for message in messages], "tools": TOOLS, "stream": False},
             timeout=180,
         )
         response.raise_for_status()
@@ -242,6 +297,40 @@ def _quoted_amount_error(name: str, arguments: dict, messages: list[dict]) -> di
     }
 
 
+_SUPPLIER = re.compile(r"\bfrom supplier\s+(.+?)\s+for\b|\bsupplier:\s*(.+?)\s*(?:\n|$)", re.IGNORECASE)
+
+
+def _stated_suppliers(messages: list[dict]) -> list[str]:
+    names = []
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        for match in _SUPPLIER.finditer(message.get("content") or ""):
+            name = (match.group(1) or match.group(2) or "").strip().rstrip(".,")
+            if name:
+                names.append(name)
+    return names
+
+
+def _stated_supplier_error(name: str, arguments: dict, messages: list[dict]) -> dict | None:
+    """Send the call back when the request names a supplier and the call drops or changes it."""
+    if name not in _AMOUNT_TOOLS:
+        return None
+    stated = _stated_suppliers(messages)
+    if not stated:
+        return None
+    passed = str(arguments.get("supplier") or "")
+    if any(same_supplier(passed, supplier) for supplier in stated):
+        return None
+    return {
+        "ok": False,
+        "error": (
+            f"The request names the quoting supplier {stated[0]}. "
+            f"Call {name} again with supplier set to \"{stated[0]}\"."
+        ),
+    }
+
+
 def _run_tool(name: str, arguments: dict, call_tool: Callable[[str, dict], dict] | None) -> dict:
     if call_tool is not None:
         try:
@@ -283,12 +372,15 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
                     arguments = {}
             result = _quoted_amount_error(name, arguments, state["messages"])
             if result is None:
+                result = _stated_supplier_error(name, arguments, state["messages"])
+            if result is None:
                 result = _run_tool(name, arguments, call_tool)
             followups.append(
                 {
                     "role": "tool",
                     "name": name,
-                    "content": json.dumps(result, ensure_ascii=False),
+                    "content": json.dumps(for_model(name, result), ensure_ascii=False),
+                    "result": result,
                 }
             )
         return {"messages": state["messages"] + followups}
@@ -325,7 +417,7 @@ def run_agent(task: str, model: Any | None = None) -> dict:
     draft = None
     for message in state["messages"]:
         if message.get("role") == "tool" and message.get("name") == "draft_committee_note":
-            payload = json.loads(message["content"])
+            payload = message.get("result") or json.loads(message["content"])
             if payload.get("ok"):
                 draft = payload
     return {"messages": state["messages"], "draft": draft, "steps": state["steps"]}

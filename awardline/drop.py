@@ -71,7 +71,7 @@ def write_committee_file(filename: str, content: str) -> str:
 
 
 def file_committee_note(note_id: str) -> dict:
-    from awardline.notes import approval_for, draft_for
+    from awardline.notes import approval_error, approval_for, draft_for
 
     draft = draft_for(note_id)
     approval = approval_for(note_id)
@@ -80,12 +80,9 @@ def file_committee_note(note_id: str) -> dict:
         result = {"ok": False, "error": "No draft to file."}
         log_call(caller(), "file_committee_note", inputs, result, False)
         return result
-    if approval is None or approval.get("decision") != "approve":
-        result = {
-            "ok": False,
-            "error": "Officer approval required before this note can be filed.",
-            "note_id": note_id,
-        }
+    refusal = approval_error(draft, approval)
+    if refusal is not None:
+        result = {"ok": False, "error": refusal, "note_id": note_id}
         log_call(caller(), "file_committee_note", inputs, result, False)
         return result
     try:

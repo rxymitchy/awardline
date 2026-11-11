@@ -1,4 +1,4 @@
-"""Eight passing checks and one failure we did not fix."""
+"""Evaluation tasks. Every task is expected to pass."""
 
 import json
 from pathlib import Path
@@ -142,11 +142,14 @@ def task_approved_note_can_be_filed(tmp_root: Path) -> None:
             ],
         }
     )
-    (notes.DRAFTS / f"{note_id}.json").write_text(json.dumps({"note_id": note_id, "text": text}), encoding="utf-8")
+    (notes.DRAFTS / f"{note_id}.json").write_text(
+        json.dumps({"note_id": note_id, "revision": "rev-1", "text": text}), encoding="utf-8"
+    )
     (notes.APPROVALS / f"{note_id}.json").write_text(
         json.dumps(
             {
                 "note_id": note_id,
+                "draft_revision": "rev-1",
                 "officer": "Amina Yusuf",
                 "decision": "approve",
                 "approved_at": "2026-10-13T00:00:00+00:00",
@@ -173,9 +176,64 @@ def task_approved_note_can_be_filed(tmp_root: Path) -> None:
     assert "ocds-test-1" in (target / f"{note_id}.md").read_text(encoding="utf-8")
 
 
-def task_supplier_suffix_still_unresolved() -> None:
-    # Desired, not implemented: treat Ltd and Limited as the same supplier.
-    assert same_supplier("KIOLI INVESTMENTS LIMITED", "Kioli Investments Ltd")
+# Supplier name pairs checked before supplier matching is used in a finding.
+# The first group are spellings of one firm, taken from the PPIP snapshot.
+SAME_FIRM = [
+    ("KIOLI INVESTMENTS LIMITED", "Kioli Investments Ltd"),
+    ("KIOLI INVESTMENTS LIMITED", "M/S KIOLI INVESTMENTS LIMITED"),
+    ("CIC General Insurance Ltd.", "CIC  GENERAL INSURANCE LTD"),
+    ("Adnow Construction Co Limited", "Adnow Construction Company Limited"),
+    ("Laboratory & Allied Ltd", "Laboratory &Allied Limited"),
+    ("Noto Engineering Limited\nP.o .Box 602 - 30100 Eldoret", "Noto Engineering Limited P.o Box 602 - 30100 Eldoret"),
+]
+# The second group must stay apart: a merge here would pin a flag on the wrong firm.
+DIFFERENT_FIRMS = [
+    ("Kioli Investments Ltd", "Kioli Holdings Ltd"),
+    ("BRITAM GENERAL INSURANCE COMPANY (KENYA ) LIMITED", "BRITAM GENERAL INSURANCE COMPANY LIMITED"),
+    ("PREMIUM TOOLS&EQUIPMENTS (K) LTD", "PREMIUM TOOLS&EQUIPMENTS LTD"),
+    ("Limited", "Ltd"),
+    ("", ""),
+    ("Print Options Ltd", "Print Options Kenya Ltd"),
+]
+
+
+def task_supplier_suffix_is_one_firm() -> None:
+    for left, right in SAME_FIRM:
+        assert same_supplier(left, right), f"should match: {left!r} / {right!r}"
+        assert same_supplier(right, left), f"should match: {right!r} / {left!r}"
+    for left, right in DIFFERENT_FIRMS:
+        assert not same_supplier(left, right), f"should not match: {left!r} / {right!r}"
+        assert not same_supplier(right, left), f"should not match: {right!r} / {left!r}"
+
+
+def task_loosely_related_award_is_excluded() -> None:
+    fuel = "Supply of fuels and lubricants for motor vehicles"
+    rows = [_award(index, 100000, fuel) for index in range(1, 5)]
+    rows += [_award(index, 900000, "Supply of tyres for motor vehicles") for index in range(5, 9)]
+    rows += [_award(index, 50000, f"Office item {index}") for index in range(9, 40)]
+    finding = flag_price_outlier(rows, "Example County", fuel, 250000)
+    titles = {source["title"] for source in finding["sources"]}
+    assert titles == {fuel}, titles
+    assert finding["median"] == 100000
+    assert finding["flagged"] is True
+    assert all("fuel" in source["matched_words"] for source in finding["sources"])
+
+
+def task_supplier_history_merges_spellings() -> None:
+    rows = history()
+    rows[0] = {**rows[0], "supplier": "KIOLI INVESTMENTS LIMITED"}
+    rows[1] = {**rows[1], "supplier": "M/S Kioli Investments Ltd"}
+    rows.append({**_award(9, 70000, "Printing services"), "supplier": "Kioli Holdings Ltd"})
+    finding = flag_price_outlier(
+        rows, "Example County", "fresh milk school feeding", 500000, supplier="Kioli Investments Ltd"
+    )
+    merged = finding["supplier_history"]
+    assert merged["award_count"] == 2
+    assert merged["names_merged"] == ["KIOLI INVESTMENTS LIMITED", "M/S Kioli Investments Ltd"]
+    assert sum(1 for source in finding["sources"] if source["same_supplier"]) == 2
+    text = render_note({**finding, "note_id": "note-supplier"})
+    assert "KIOLI INVESTMENTS LIMITED; M/S Kioli Investments Ltd" in text
+    assert "Kioli Holdings" not in text
 
 
 TASKS = [
@@ -187,7 +245,9 @@ TASKS = [
     ("T6 draft cites flag sources and refuses to invent", None, True),
     ("T7 filing without an officer is refused", None, True),
     ("T8 an approved note can be filed", None, True),
-    ("T9 supplier Ltd and Limited are still different", task_supplier_suffix_still_unresolved, False),
+    ("T9 supplier Ltd and Limited are one firm, known different firms stay apart", task_supplier_suffix_is_one_firm, True),
+    ("T10 a loosely related award is not used as a comparable", task_loosely_related_award_is_excluded, True),
+    ("T11 supplier history merges spellings and shows them", task_supplier_history_merges_spellings, True),
 ]
 
 

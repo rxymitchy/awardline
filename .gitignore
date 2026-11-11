@@ -10,3 +10,4 @@ filings/
 data/raw/
 data/ppip-*.json
 evals/results.json
+data/*.part

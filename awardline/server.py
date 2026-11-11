@@ -17,19 +17,19 @@ def search_awards(buyer: str = "", query: str = "", limit: int = 8) -> str:
 
 
 @mcp.tool()
-def flag_price_outlier(buyer: str, query: str, amount: float, currency: str = "KES") -> str:
+def flag_price_outlier(buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = "") -> str:
     """Compare a quoted amount with past awards and write a sourced flag. Does not file anything."""
     return json.dumps(
-        tool_flag_price_outlier(buyer=buyer, query=query, amount=amount, currency=currency),
+        tool_flag_price_outlier(buyer=buyer, query=query, amount=amount, currency=currency, supplier=supplier),
         ensure_ascii=False,
     )
 
 
 @mcp.tool()
-def draft_committee_note(buyer: str, query: str, amount: float, currency: str = "KES") -> str:
+def draft_committee_note(buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = "") -> str:
     """Draft a committee note from an existing flag. Citations come from the flag, not from the model."""
     return json.dumps(
-        tool_draft_committee_note(buyer=buyer, query=query, amount=amount, currency=currency),
+        tool_draft_committee_note(buyer=buyer, query=query, amount=amount, currency=currency, supplier=supplier),
         ensure_ascii=False,
     )
 

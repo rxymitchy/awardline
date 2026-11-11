@@ -8,7 +8,7 @@ A Kenyan procuring entity's evaluation committee has to judge whether a quote is
 
 ## Solution overview
 
-The officer gives the buyer, the purchase, and the quoted amount. The agent searches 4,956 Kenya PPIP awards from the 2025/2026 and 2026/2027 release files. It keeps awards in the same currency whose titles share at least two content words with the quote. When at least four of those exist, it compares the quote with their median. A quote at least twice that median is flagged. Each source is listed with its OCID, buyer, title, amount, date, and the PPIP file it came from. If the history is too thin, no flag is raised. The agent then drafts a committee note from that flag. It cannot invent an OCID or an amount.
+The officer gives the buyer, the purchase, the quoted amount, and, if known, the quoting supplier. The agent searches 4,956 Kenya PPIP awards from the 2025/2026 and 2026/2027 release files. It keeps awards in the same currency whose titles share at least two content words with the quote, where those shared words carry at least half of the description's weight. Rare words count for more than common ones, so a fuel quote is not compared with tyre contracts just because both say "motor vehicles". When at least four comparable awards exist, it compares the quote with their median. A quote at least twice that median is flagged. Each source is listed with its OCID, buyer, title, supplier, amount, date, the PPIP file it came from, and the words that matched. If the history is too thin, no flag is raised. When a supplier is named, the note also lists that firm's past PPIP awards, merging spellings such as `Ltd` and `Limited` and showing every name it merged. The agent then drafts a committee note from that flag. It cannot invent an OCID or an amount.
 
 ## Target users
 
@@ -23,10 +23,12 @@ One local agent sits in front of two MCP servers. Qwen 2.5 3B, through Ollama on
 | `awardline/server.py` | Our MCP server |
 | `awardline/agent.py` | LangGraph loop over Qwen 2.5 |
 | `awardline/drop.py` | Filing, via `@modelcontextprotocol/server-filesystem` |
+| `awardline/score.py` | Comparable awards, median, and supplier history |
+| `awardline/snapshot.py` | Downloads PPIP packages and builds the snapshot |
 | `data/awards.json` | PPIP awards used by the tools |
 | `logs/tool_calls.jsonl` | Every tool call, approval, and file write |
 | `ARCHITECTURE.md` | How the pieces connect |
-| `EVALS.md` | Test tasks, including the one we did not fix |
+| `EVALS.md` | Evaluation tasks and results |
 
 ## Setup/installation instructions
 
@@ -55,7 +57,7 @@ Approve and file an existing note separately:
 .\.venv\Scripts\python -m awardline file --note-id note-505b1626d7
 ```
 
-Other commands: `python -m awardline serve` starts the Awardline MCP server on stdio, and `python -m awardline eval` runs the evaluation tasks.
+Other commands: `python -m awardline serve` starts the Awardline MCP server on stdio, `python -m awardline eval` runs the evaluation tasks, and `python -m awardline refresh` downloads the current PPIP release packages and rebuilds `data/awards.json`. A failed download leaves the last good snapshot in place. Each note states how many awards the snapshot holds and when it was downloaded.
 
 ## Technology stack
 
@@ -63,7 +65,9 @@ Python, the MCP Python SDK, LangGraph, httpx, Pydantic, and pytest. Node.js runs
 
 ## Agent architecture
 
-Awardline is a single agent. Working memory is the message list LangGraph keeps for the current quote. `plan` asks Qwen for the next action. `tools` sends that call to the Awardline MCP server over stdio and appends the result, including errors. The loop returns to `plan` until the model stops or eight steps pass. An unknown tool name, an empty search, and a quoted amount that does not match the request all come back so the model can try again. The model is told to stop when the draft exists.
+Awardline is a single agent. Working memory is the message list LangGraph keeps for the current quote. `plan` asks Qwen for the next action. `tools` sends that call to the Awardline MCP server over stdio and appends the result, including errors. The loop returns to `plan` until the model stops or eight steps pass. An unknown tool name, an empty search, a quoted amount that does not match the request, and a supplier that the request names but the call leaves out or changes all come back so the model can try again. A different spelling of the same supplier is accepted. The model is told to stop when the draft exists.
+
+Qwen 2.5 3B runs on CPU with a 4,096-token context. The model sees a short summary of each tool result: the note ID, whether the quote was flagged, the median, the ratio, and how many comparables and past supplier awards were found. The full result, with every source, stays in the graph state and the log, and the note is built from the saved flag, so nothing the committee reads passes through the model.
 
 ## MCP implementation
 
@@ -80,7 +84,7 @@ Awardline's own server exposes four tools:
 | `draft_committee_note` | Writes a draft whose citations are copied from that flag |
 | `file_committee_note` | Files the note, or refuses |
 
-`draft_committee_note` refuses when no flag exists for the same buyer, description, and amount. A flag needs at least four awards that share two content words with the quote and use the same currency. The quote is flagged when it is at least twice their median.
+`flag_price_outlier` and `draft_committee_note` take an optional `supplier`. `draft_committee_note` refuses when no flag exists for the same buyer, description, amount, and supplier. A flag needs at least four awards in the same currency that share two content words with the quote, carrying at least half of the description's word weight. The quote is flagged when it is at least twice their median.
 
 The server we did not write is `@modelcontextprotocol/server-filesystem`. It can see only `filings/`. We use it because the directory allow-list is already its job.
 
@@ -88,21 +92,21 @@ The server we did not write is `@modelcontextprotocol/server-filesystem`. It can
 
 1. The officer states the quote.
 2. The agent searches, flags, and drafts. It does not award the tender.
-3. Filing is refused until `runtime/approvals/<note_id>.json` contains `decision: approve` and a human officer's name.
+3. Filing is refused until `runtime/approvals/<note_id>.json` contains `decision: approve`, a human officer's name, and the revision of the current draft. Each draft gets a new revision, so an approval does not carry over when the agent drafts the same quote again.
 4. The officer runs `python -m awardline approve --note-id <id> --officer "<name>"`. That command is not a tool the model can call. Names shorter than 3 characters, and the names `agent`, `awardline`, and `model`, are rejected. The log line has `"actor": "human"`.
 5. `python -m awardline file --note-id <id>` calls the filesystem MCP server, which writes `filings/<note_id>.md`.
 
 ## Limitations
 
-- Supplier names that differ only by `Ltd` and `Limited` are not treated as the same firm. See `EVALS.md` task T9. That failure is left unfixed on purpose.
-- Award amounts have no unit. The 2025/2026 and 2026/2027 PPIP packages contain no line items, quantities, or units, so a per-litre price and a lump-sum contract can be compared when their titles share two words.
+- Award amounts have no unit. The 2025/2026 and 2026/2027 PPIP packages contain no line items, quantities, or units, so the median compares contract totals. Every note says so, and lists the words that matched each source so the committee can drop one that is a different size of purchase.
 - There is no budget or unpaid-invoice check. Those packages contain no budgets and no payments.
-- Title matching can include a loosely related award. A fuel contract and a tyre contract can both match on "motor vehicles".
-- The snapshot is downloaded once. A run does not call the PPIP portal again.
-- A small model can drop a zero on the quoted amount. The graph rejects that call and asks for the amount in the request.
+- Title matching is better but not perfect. Weighting words by rarity keeps a fuel quote away from tyre contracts, but two titles can still share rare words and describe different purchases. Every note states that a past award may itself have been overpriced.
+- Supplier matching ignores only case, punctuation, a leading `M/S`, a trailing postal address, and `Ltd`, `Limited`, `Co`, `Company`, and `PLC`. It does not merge `(K)` or `Kenya` variants, or abbreviations such as `Intl`, because those can be different firms. Supplier history is shown for context. It never raises or removes a price flag.
+- The snapshot only changes when someone runs `python -m awardline refresh`. A run does not call the PPIP portal.
+- A small model can drop a zero on the quoted amount or leave out the supplier. The graph rejects that call and asks for the amount or supplier in the request.
 
 ## Future improvements
 
-- Strip `Ltd`, `Limited`, and `Company` before comparing supplier names, then check the result against known pairs before using it in a finding. That is the next attempt for T9. It is not done here, because a bad merge would attach a price flag to the wrong firm.
-- Show the shared words that caused each past award to be included, and state on the note that a past award may itself have been high.
-- If PPIP starts publishing quantities and units, compare unit prices instead of lump sums.
+- If PPIP starts publishing quantities and units, compare unit prices instead of contract totals.
+- Use a supplier's KRA PIN as the matching key if PPIP starts publishing it, instead of the name.
+- Let the officer exclude a source from the note and record who excluded it and why.
