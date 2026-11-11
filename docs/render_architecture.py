@@ -94,7 +94,7 @@ def main() -> None:
         draw,
         (64, 170, 430, 360),
         "Human",
-        "Officer brings one quote:\nbuyer, purchase, amount.",
+        "Officer brings one quote:\nbuyer, purchase, amount,\nand the quoting supplier.",
         "#FFEDD5",
         "#C2410C",
     )
@@ -162,14 +162,14 @@ def main() -> None:
 
     route(draw, [(1760, 360), (1760, 420), (552, 420), (552, 470)])
     arrow(draw, (1040, 700), (1160, 700))
-    draw.text((1052, 664), "after approval", font=font(18), fill=MUTED)
+    draw.text((1052, 640), "after\napproval", font=font(18), fill=MUTED)
     arrow(draw, (1648, 760), (1648, 800))
 
     box(
         draw,
         (64, 920, 430, 1140),
         "Data source",
-        "data/awards.json\n4,956 PPIP awards.\nDownloaded once from\ntenders.go.ke.",
+        "data/awards.json\n4,956 PPIP awards from\ntenders.go.ke. Updated by\nawardline refresh.",
         "#F5F5F4",
         "#44403C",
     )
@@ -188,7 +188,7 @@ def main() -> None:
         "python -m awardline approve --officer \"Name\"\n"
         "Writes runtime/approvals. Actor is human.\n"
         "This command is not a tool the model can call.\n"
-        "file_committee_note refuses until decision is approve.",
+        "Filing refuses unless it covers the current draft.",
         "#FFE4E6",
         "#9F1239",
     )
@@ -202,7 +202,7 @@ def main() -> None:
         "2. LangGraph asks Qwen for the next tool.",
         "3. The MCP client calls the Awardline server.",
         "4. Search reads the snapshot. Flag and draft write files.",
-        "5. The JSON result returns to Qwen. Errors come back too.",
+        "5. Qwen gets a short summary. Errors come back too.",
         "6. The model stops when the note exists. It does not award.",
         "7. A named officer approves.",
         "8. file_committee_note calls the filesystem server, which writes filings/.",
