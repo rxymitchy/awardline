@@ -72,7 +72,8 @@ def supplier_history(awards: list[dict], supplier: str) -> dict | None:
         "key": supplier_key(supplier),
         "award_count": len(rows),
         "total_amount": round(sum(float(award["amount"]) for award in rows), 2),
-        "names_merged": sorted({award["supplier"] for award in rows}),
+        # Names that differ only by spacing are shown once.
+        "names_merged": sorted({" ".join(award["supplier"].split()) for award in rows}),
         "awards": [_source(award) for award in rows[:SUPPLIER_HISTORY_LIMIT]],
     }
 

@@ -155,10 +155,13 @@ def render_note(finding: dict) -> str:
             lines.append(
                 f"- {history['award_count']} past PPIP awards, total {currency} {history['total_amount']:,.2f}."
             )
-            lines.append(
-                "- Names treated as the same firm (only case, punctuation, \"M/S\", a postal address, "
-                "and Ltd/Limited/Co/Company/PLC were ignored): " + "; ".join(history["names_merged"])
-            )
+            if len(history["names_merged"]) > 1:
+                lines.append(
+                    "- Names treated as the same firm (only case, punctuation, \"M/S\", a postal address, "
+                    "and Ltd/Limited/Co/Company/PLC were ignored): " + "; ".join(history["names_merged"])
+                )
+            else:
+                lines.append(f"- Published under one name: {history['names_merged'][0]}")
             for award in history["awards"]:
                 lines.append(
                     f"- {award['ocid']} | {award['buyer']} | {award['title']} | {award['supplier']} | "
