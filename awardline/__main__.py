@@ -3,13 +3,14 @@ import json
 from collections import Counter, defaultdict
 
 from awardline.agent import OllamaModel, run_agent
-from awardline.awards import load_snapshot, tokens
+from awardline.awards import load_snapshot, same_supplier, tokens
 from awardline.drop import file_committee_note
 from awardline.notes import record_approval
-from awardline.score import median
+from awardline.score import MIN_HISTORY, comparables, median
 
 
 def pick_demo_case(awards: list[dict]) -> dict | None:
+    """Pick a real purchase with enough genuinely comparable awards to judge a quote."""
     index = defaultdict(list)
     for position, award in enumerate(awards):
         for token in tokens(award["title"]):
@@ -23,22 +24,31 @@ def pick_demo_case(awards: list[dict]) -> dict | None:
         wanted = tokens(title)
         if len(wanted) < 2:
             continue
+        # Cheap pre-filter on shared words before running the weighted matcher.
         counts: Counter[int] = Counter()
         for token in wanted:
             for position in index[token]:
                 counts[position] += 1
-        hits = [awards[position] for position, count in counts.items() if count >= 2]
-        if len(hits) < 4:
+        if sum(1 for count in counts.values() if count >= 2) < MIN_HISTORY:
             continue
-        typical = median([float(row["amount"]) for row in hits[:12]])
+        history = comparables(awards, title)
+        if len(history) < MIN_HISTORY:
+            continue
+        typical = median([float(row["amount"]) for row in history])
         if typical < 1000:
             continue
+        # Quote from a supplier with more than one PPIP award, so the note shows supplier history.
+        supplier = next(
+            (row["supplier"] for row in history if sum(1 for a in awards if same_supplier(a["supplier"], row["supplier"])) > 1),
+            history[0]["supplier"],
+        )
         return {
             "buyer": award["buyer"],
             "query": title,
+            "supplier": supplier,
             "amount": round(typical * 4, 2),
             "median": round(typical, 2),
-            "comparables": len(hits),
+            "comparables": len(history),
         }
     return None
 
@@ -50,7 +60,8 @@ def demo(approve: bool, officer: str) -> int:
         print("No purchase in the snapshot has 4 comparable awards.")
         return 1
     task = (
-        f"Buyer {case['buyer']} received a quote of KES {case['amount']:,.2f} for: {case['query']} "
+        f"Buyer {case['buyer']} received a quote of KES {case['amount']:,.2f} "
+        f"from supplier {case['supplier']} for: {case['query']} "
         "Compare it with published past awards and draft a value-for-money committee note. "
         "Do not award the tender."
     )
@@ -64,12 +75,18 @@ def demo(approve: bool, officer: str) -> int:
             print(message.get("role"), (message.get("content") or "")[:500])
         return 1
     print(draft["text"])
+    print("---")
+    for message in result["messages"]:
+        if message.get("role") == "tool" and message.get("name") == "file_committee_note":
+            outcome = message.get("result") or json.loads(message["content"])
+            if outcome.get("ok"):
+                print(f"The agent filed the note: {outcome['path']} (approved by {outcome['officer']}).")
+            else:
+                print(f"The agent tried to file the note and was refused: {outcome.get('error')}")
     if not approve:
-        print("---")
-        print(f"Not filed. An officer can approve note {draft['note_id']}.")
+        print(f"Not filed by this demo. An officer can approve note {draft['note_id']}.")
         return 0
     approval = record_approval(draft["note_id"], officer)
-    print("---")
     print("Officer approval:", json.dumps(approval))
     if not approval.get("ok"):
         return 1
@@ -95,6 +112,7 @@ def main() -> None:
 
     sub.add_parser("serve", help="Run the Awardline MCP server on stdio")
     sub.add_parser("eval", help="Run the evaluation tasks and write evals/results.json")
+    sub.add_parser("refresh", help="Download the current PPIP release packages and rebuild the snapshot")
 
     args = parser.parse_args()
     if args.command == "demo":
@@ -114,6 +132,12 @@ def main() -> None:
         from awardline.evaluate import main as evaluate
 
         raise SystemExit(evaluate())
+    if args.command == "refresh":
+        from awardline.snapshot import refresh
+
+        result = refresh()
+        print(json.dumps(result, indent=2))
+        raise SystemExit(0 if result.get("ok") else 1)
 
 
 if __name__ == "__main__":
