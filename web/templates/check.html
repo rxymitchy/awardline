@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Check a Quote · Awardline{% endblock %}
+
+{% block content %}
+<div class="page-narrow">
+  <h2>Check a quote</h2>
+  <p class="page-intro">
+    Fill in the quote details below. The Awardline agent will search published PPIP
+    award records, calculate the median contract price, check supplier history, and
+    draft a sourced committee note. This takes 2-3 minutes on a local model.
+  </p>
+
+  {% if error %}
+  <div class="alert alert-error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/check" class="form-card">
+
+    <div class="form-row">
+      <label for="buyer">Procuring entity</label>
+      <input
+        id="buyer"
+        name="buyer"
+        type="text"
+        placeholder="e.g. Nairobi City County"
+        value="{{ buyer or '' }}"
+        required
+        autofocus
+      >
+      <p class="field-hint">The government body that is buying.</p>
+    </div>
+
+    <div class="form-row">
+      <label for="item">Purchase description</label>
+      <input
+        id="item"
+        name="item"
+        type="text"
+        placeholder="e.g. Supply and delivery of office furniture"
+        value="{{ item or '' }}"
+        required
+      >
+      <p class="field-hint">
+        Use the same wording as the tender notice. More specific = better matches.
+      </p>
+    </div>
+
+    <div class="form-row">
+      <label for="amount">Quoted amount (KES)</label>
+      <input
+        id="amount"
+        name="amount"
+        type="text"
+        inputmode="decimal"
+        placeholder="e.g. 1,250,000"
+        value="{{ amount or '' }}"
+        required
+      >
+      <p class="field-hint">Numbers only. Commas are fine.</p>
+    </div>
+
+    <div class="form-row">
+      <label for="supplier">Quoting supplier <span class="optional">(optional)</span></label>
+      <input
+        id="supplier"
+        name="supplier"
+        type="text"
+        placeholder="e.g. Kioli Investments Limited"
+        value="{{ supplier or '' }}"
+      >
+      <p class="field-hint">
+        When provided, Awardline shows the supplier's past PPIP awards and flags
+        if any source contract went to the same firm.
+      </p>
+    </div>
+
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Start agent analysis</button>
+      <p class="field-hint" style="margin-top: 10px;">
+        The agent will plan its approach, call tools, and retry on errors — just like the CLI demo.
+      </p>
+    </div>
+  </form>
+</div>
+{% endblock %}

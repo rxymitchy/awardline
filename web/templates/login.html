@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in · Awardline</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+  <div class="login-card">
+    <div class="login-brand">
+      <span class="brand-icon large">⚖</span>
+      <h1>Awardline</h1>
+      <p class="login-tagline">Kenya PPIP value-for-money tool</p>
+    </div>
+
+    {% if error %}
+    <div class="alert alert-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="login-form">
+      <label for="officer">Your full name</label>
+      <input
+        id="officer"
+        name="officer"
+        type="text"
+        placeholder="e.g. Amina Yusuf"
+        autocomplete="name"
+        required
+        autofocus
+      >
+      <p class="field-hint">
+        Your name is recorded on every note you approve. Use the same name each session.
+      </p>
+      <button type="submit" class="btn btn-primary btn-full">Sign in</button>
+    </form>
+
+    <p class="login-note">
+      No password required for this demo. In production, tie this to your organisation's SSO.
+    </p>
+  </div>
+</body>
+</html>

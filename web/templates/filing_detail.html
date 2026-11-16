@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Filing {{ note_id[:8] }} · Awardline{% endblock %}
+
+{% block content %}
+<div class="page-narrow">
+  <div class="page-heading">
+    <h2>Filed committee note</h2>
+    <a href="/filings" class="btn btn-secondary">← All filings</a>
+  </div>
+
+  {% if approval %}
+  <div class="meta-bar">
+    <span>Approved by <strong>{{ approval.officer }}</strong></span>
+    <span class="sep">·</span>
+    <span>{{ approval.approved_at[:10] }}</span>
+    <span class="sep">·</span>
+    <span class="mono small-text">{{ note_id }}</span>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <pre class="note-text">{{ text }}</pre>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Home · Awardline{% endblock %}
+
+{% block content %}
+<div class="hero">
+  <div class="hero-text">
+    <h2>Is this quote fair?</h2>
+    <p>
+      Enter a supplier quote and the Awardline agent searches published Kenya PPIP
+      contracts, plans its analysis, retries on errors, and drafts a sourced
+      value-for-money note ready for your committee.
+    </p>
+    <a href="/check" class="btn btn-primary btn-large">Check a quote</a>
+    <a href="/filings" class="btn btn-secondary btn-large">View filed notes</a>
+  </div>
+  <div class="hero-steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div>
+        <strong>Enter the quote</strong>
+        <p>Buyer, item, quoted amount, supplier name.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div>
+        <strong>Agent works (2-3 min)</strong>
+        <p>Plans approach, searches PPIP, flags outliers, checks supplier history, drafts note.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div>
+        <strong>Review &amp; approve</strong>
+        <p>See the verdict, check sources, approve with your name, file to committee folder.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

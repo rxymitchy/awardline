@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Awardline{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/">
+        <span class="brand-icon">⚖</span>
+        <span>Awardline</span>
+      </a>
+      {% if officer %}
+      <nav class="header-nav">
+        <a href="/check">New Check</a>
+        <a href="/filings">Filed Notes</a>
+        <span class="officer-pill">{{ officer }}</span>
+        <a href="/logout" class="logout-link">Log out</a>
+      </nav>
+      {% endif %}
+    </div>
+  </header>
+
+  <main class="page-content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <p>Awardline · Kenya PPIP value-for-money tool · Data from published PPIP awards</p>
+  </footer>
+</body>
+</html>

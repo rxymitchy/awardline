@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Note {{ note_id[:8] }} · Awardline{% endblock %}
+
+{% block content %}
+<div class="page-wide">
+
+  {# ── Verdict banner ──────────────────────────────────────────────────── #}
+  {% if finding.flagged %}
+  <div class="verdict-banner verdict-flag">
+    <div class="verdict-icon">🚩</div>
+    <div class="verdict-body">
+      <strong>PRICE FLAG</strong>
+      <span>
+        KES {{ "{:,.2f}".format(finding.amount) }} is
+        {{ finding.ratio }}× the median of
+        {{ finding.comparable_count }} past contracts
+        (median KES {{ "{:,.2f}".format(finding.median) }}).
+      </span>
+    </div>
+  </div>
+  {% elif finding.median is not none %}
+  <div class="verdict-banner verdict-ok">
+    <div class="verdict-icon">✅</div>
+    <div class="verdict-body">
+      <strong>NO FLAG</strong>
+      <span>
+        KES {{ "{:,.2f}".format(finding.amount) }} is within range.
+        Ratio to median: {{ finding.ratio }}×
+        (median KES {{ "{:,.2f}".format(finding.median) }} from
+        {{ finding.comparable_count }} past contracts).
+      </span>
+    </div>
+  </div>
+  {% else %}
+  <div class="verdict-banner verdict-warn">
+    <div class="verdict-icon">⚠️</div>
+    <div class="verdict-body">
+      <strong>INSUFFICIENT DATA</strong>
+      <span>
+        Only {{ finding.comparable_count }} comparable contracts found.
+        At least 4 are needed to flag.
+      </span>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="note-layout">
+
+    {# ── Left column: summary ─────────────────────────────────────────── #}
+    <div class="note-summary">
+
+      {% if tool_history %}
+      <section class="card">
+        <h3>Agent tool calls</h3>
+        <p class="small-text" style="margin-bottom: 10px;">
+          The agent planned this sequence and recovered from any errors:
+        </p>
+        <div class="tool-history">
+          {% for tc in tool_history %}
+          <div class="tool-badge {% if tc.ok %}tool-badge-ok{% else %}tool-badge-fail{% endif %}">
+            <span class="tool-icon">{% if tc.ok %}✓{% else %}✗{% endif %}</span>
+            {{ tc.name }}
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+      {% endif %}
+
+      <section class="card">
+        <h3>Quote details</h3>
+        <dl class="detail-list">
+          <dt>Buyer</dt>      <dd>{{ finding.buyer or "—" }}</dd>
+          <dt>Item</dt>       <dd>{{ finding.query }}</dd>
+          {% if finding.supplier %}
+          <dt>Supplier</dt>   <dd>{{ finding.supplier }}</dd>
+          {% endif %}
+          <dt>Amount</dt>     <dd>KES {{ "{:,.2f}".format(finding.amount) }}</dd>
+          {% if finding.median is not none %}
+          <dt>Median</dt>     <dd>KES {{ "{:,.2f}".format(finding.median) }}</dd>
+          <dt>Ratio</dt>      <dd>{{ finding.ratio }}×</dd>
+          {% endif %}
+        </dl>
+      </section>
+
+      {# ── Approval / file controls ─────────────────────────────────── #}
+      <section class="card action-card">
+        <h3>Approval &amp; filing</h3>
+        {% if already_filed %}
+          <div class="status-badge status-filed">✔ Filed</div>
+          <p>This note is in the committee drop folder.</p>
+          <a href="/filings/{{ note_id }}" class="btn btn-secondary btn-full">View filed note</a>
+        {% elif approval and approval.decision == "approve" and approval.draft_revision == draft.revision %}
+          <div class="status-badge status-approved">✔ Approved by {{ approval.officer }}</div>
+          <p class="small-text">Approved {{ approval.approved_at[:10] }}</p>
+
+          {% if file_error %}
+          <div class="alert alert-error">{{ file_error }}</div>
+          {% endif %}
+
+          <form method="post" action="/note/{{ note_id }}/file">
+            <button type="submit" class="btn btn-primary btn-full">File to committee folder</button>
+          </form>
+        {% else %}
+          {% if approval %}
+          <div class="alert alert-warn">
+            The approval on file covers an earlier draft. Approve the current draft before filing.
+          </div>
+          {% endif %}
+
+          {% if approve_error %}
+          <div class="alert alert-error">{{ approve_error }}</div>
+          {% endif %}
+
+          <p>
+            You are signed in as <strong>{{ officer }}</strong>.
+            Clicking Approve records your name on this note.
+          </p>
+          <form method="post" action="/note/{{ note_id }}/approve">
+            <button type="submit" class="btn btn-primary btn-full">Approve as {{ officer }}</button>
+          </form>
+        {% endif %}
+      </section>
+
+      {# ── Supplier history (if present) ────────────────────────────── #}
+      {% if finding.supplier_history and finding.supplier_history.award_count %}
+      <section class="card">
+        <h3>Supplier history</h3>
+        <p>
+          <strong>{{ finding.supplier_history.supplier }}</strong> has
+          {{ finding.supplier_history.award_count }} past PPIP award(s),
+          total KES {{ "{:,.2f}".format(finding.supplier_history.total_amount) }}.
+        </p>
+        {% if finding.supplier_history.names_merged | length > 1 %}
+        <p class="small-text">
+          Merged name variants:
+          {{ finding.supplier_history.names_merged | join("; ") }}
+        </p>
+        {% endif %}
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>OCID</th><th>Buyer</th><th>Title</th>
+              <th class="num">Amount (KES)</th><th>Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in finding.supplier_history.awards %}
+            <tr>
+              <td class="mono small-text">{{ a.ocid }}</td>
+              <td>{{ a.buyer }}</td>
+              <td>{{ a.title }}</td>
+              <td class="num">{{ "{:,.2f}".format(a.amount) }}</td>
+              <td class="nowrap">{{ a.date[:10] if a.date else "—" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endif %}
+
+    </div>
+
+    {# ── Right column: sources + full note text ───────────────────────── #}
+    <div class="note-detail">
+
+      <section class="card">
+        <h3>Comparable contracts ({{ finding.sources | length }})</h3>
+        {% if finding.sources %}
+        <p class="small-text">
+          A contract is included when its title shares at least 2 content words with the
+          purchase description and those words carry ≥ 50% of the description's weight.
+          Rarer words count more.
+        </p>
+        <div class="source-list">
+          {% for s in finding.sources %}
+          <div class="source-row {% if s.same_supplier %}source-same-supplier{% endif %}">
+            <div class="source-header">
+              <a class="source-link" href="{{ s.source_url }}" target="_blank" rel="noopener">
+                {{ s.ocid }}
+              </a>
+              {% if s.same_supplier %}
+              <span class="tag tag-same-supplier">same supplier</span>
+              {% endif %}
+              <span class="source-amount">KES {{ "{:,.2f}".format(s.amount) }}</span>
+            </div>
+            <div class="source-meta">
+              <span>{{ s.buyer }}</span>
+              <span class="sep">·</span>
+              <span>{{ s.title }}</span>
+              <span class="sep">·</span>
+              <span>{{ s.supplier }}</span>
+              <span class="sep">·</span>
+              <span class="nowrap">{{ s.date[:10] if s.date else "—" }}</span>
+            </div>
+            {% if s.matched_words %}
+            <div class="matched-words">
+              Matched on:
+              {% for w in s.matched_words %}
+              <span class="tag">{{ w }}</span>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty-state">No comparable contracts found in the snapshot.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h3>Full committee note</h3>
+        <p class="small-text">Note ID: <span class="mono">{{ note_id }}</span> · Revision: <span class="mono">{{ draft.revision }}</span></p>
+        <pre class="note-text">{{ draft.text }}</pre>
+      </section>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

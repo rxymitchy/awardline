@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Filed Notes · Awardline{% endblock %}
+
+{% block content %}
+<div class="page-wide">
+  <div class="page-heading">
+    <h2>Filed notes</h2>
+    <a href="/check" class="btn btn-primary">New check</a>
+  </div>
+
+  {% if filed %}
+  <table class="data-table data-table-full">
+    <thead>
+      <tr>
+        <th>Note ID</th>
+        <th>Buyer</th>
+        <th>Item</th>
+        <th class="num">Amount (KES)</th>
+        <th>Verdict</th>
+        <th>Officer</th>
+        <th>Filed</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in filed %}
+      <tr>
+        <td class="mono small-text">{{ f.note_id[:8] }}…</td>
+        <td>{{ f.buyer }}</td>
+        <td>{{ f.item }}</td>
+        <td class="num">
+          {% if f.amount is not none %}{{ "{:,.2f}".format(f.amount) }}{% else %}—{% endif %}
+        </td>
+        <td>
+          {% if f.flagged is not none %}
+            {% if f.flagged %}
+            <span class="tag tag-flag">FLAG</span>
+            {% else %}
+            <span class="tag tag-ok">OK</span>
+            {% endif %}
+          {% else %}
+            <span class="tag">—</span>
+          {% endif %}
+        </td>
+        <td>{{ f.officer }}</td>
+        <td class="nowrap">{{ f.approved_at }}</td>
+        <td><a href="/filings/{{ f.note_id }}" class="btn btn-secondary btn-sm">View</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty-state-block">
+    <p>No notes have been filed yet.</p>
+    <a href="/check" class="btn btn-primary">Check a quote</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

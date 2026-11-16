@@ -2,6 +2,12 @@
 
 Awardline prepares a value-for-money note for a Kenyan procuring entity. It compares a quote with published [Kenya PPIP](https://tenders.go.ke/ocds) awards, flags a price that is at least twice the median of similar awards, and drafts a committee note. A named officer approves the note before it is filed. The agent does not award a tender.
 
+**Two interfaces:**
+- **CLI**: Full agent demo — give it a task in natural language, watch it plan, call tools, retry on errors, and draft a note (2-3 minutes on Qwen 2.5 3B)
+- **Web UI**: Same agent, form-driven — officer fills buyer/item/amount, agent runs in background, results appear when ready
+
+Both use the same LangGraph agent. The web form just constructs the task string for the officer.
+
 ## Problem statement
 
 A Kenyan procuring entity's evaluation committee has to judge whether a quote is reasonable before it recommends an award. The practical check is what similar purchases cost last time. That history is on the Public Procurement Information Portal, which publishes thousands of award notices, but an officer still searches titles by hand and writes down the contracts they compared. A price several times a recent award can pass because nobody lined the figures up.
@@ -25,6 +31,8 @@ One local agent sits in front of two MCP servers. Qwen 2.5 3B, through Ollama on
 | `awardline/drop.py` | Filing, via `@modelcontextprotocol/server-filesystem` |
 | `awardline/score.py` | Comparable awards, median, and supplier history |
 | `awardline/snapshot.py` | Downloads PPIP packages and builds the snapshot |
+| `web/app.py` | FastAPI web UI — runs the same agent |
+| `web/templates/` | Jinja2 templates for login, form, progress, results |
 | `data/awards.json` | PPIP awards used by the tools |
 | `logs/tool_calls.jsonl` | Every tool call, approval, and file write |
 | `ARCHITECTURE.md` | How the pieces connect |
@@ -42,12 +50,38 @@ npm install; python -m venv .venv; .\.venv\Scripts\python -m pip install -r requ
 
 ## Usage instructions
 
+### CLI agent demo
+
 The demo picks a real purchase that has at least four comparable awards, asks Qwen 2.5 3B to check a quote at four times the median, and prints the note. It does not file the note.
 
 To file it, an officer has to be named:
 
 ```powershell
 .\.venv\Scripts\python -m awardline demo --approve --officer "Amina Yusuf"
+```
+
+### Web UI
+
+Start the web server:
+
+```powershell
+.\start_web.ps1
+```
+
+Then open http://localhost:8000 in your browser.
+
+1. **Sign in** with your name (e.g. "Amina Yusuf") — your name is recorded on every note you approve
+2. **Check a quote** — fill the form with buyer, item, amount, and supplier
+3. **Agent works** — watch tool calls appear in real time as the agent searches PPIP, flags outliers, checks supplier history, and drafts the note (2-3 minutes)
+4. **Review results** — see the verdict (FLAG / NO FLAG / INSUFFICIENT DATA), all sources with OCIDs, median, ratio, and full committee note text
+5. **Approve** — click Approve to record your name on the note
+6. **File** — the note lands in the `filings/` folder via the filesystem MCP server
+
+The web UI runs the same `run_agent()` function as the CLI — no business logic is duplicated. The form just constructs the task string.
+
+---
+
+**Original CLI usage below:**
 ```
 
 Approve and file an existing note separately:
