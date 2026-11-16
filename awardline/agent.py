@@ -94,10 +94,14 @@ SYSTEM = """You are Awardline, preparing a value-for-money note for a Kenyan pro
 Use published award records only. Never award a tender. Never invent an OCID or an amount.
 Plan, then call tools:
 1. search_awards for the buyer and the purchase.
-2. If the search is empty, change the query and search again. Do not flag without records.
-3. flag_price_outlier with the quoted amount. If the request names the quoting supplier, pass it as supplier.
+2. If the search returns 0 or very few results (<4), you can try ONE more time with a simpler query 
+   (e.g., "furniture" instead of "office furniture", "vehicles" instead of "motor vehicles").
+3. After at most 2 searches, ALWAYS call flag_price_outlier with the quoted amount, even if you 
+   found fewer than 4 comparable awards. The tool will handle the "insufficient data" case.
 4. draft_committee_note with the same buyer, query, amount, and supplier.
 5. Stop when the draft is ready. You may try file_committee_note, and if it refuses, stop and say the officer must approve.
+
+If the request names the quoting supplier, pass it as supplier to both flag_price_outlier and draft_committee_note.
 Every finding must come from tool output.
 Copy the quoted amount exactly. Do not round it or drop a zero.
 """
@@ -377,39 +381,69 @@ def _is_stuck_in_loop(messages: list[dict]) -> bool:
     """Detect if agent is calling search_awards repeatedly without progressing."""
     # Count recent tool calls (last 6 messages, which is 3 assistant+tool pairs)
     recent_tools = [
-        msg.get("name") 
+        (msg.get("name"), msg.get("result", {}).get("count", 0)) 
         for msg in messages[-6:] 
         if msg.get("role") == "tool"
     ]
     
-    # If we've seen search_awards 3+ times without flag_price_outlier, we're stuck
-    search_count = recent_tools.count("search_awards")
-    has_flag = any(msg.get("role") == "tool" and msg.get("name") == "flag_price_outlier" for msg in messages)
+    # If we've seen search_awards 2+ times, check if we should progress
+    search_calls = [name for name, count in recent_tools if name == "search_awards"]
     
-    return search_count >= 3 and not has_flag
+    # If 2+ searches and no flag call yet, we're potentially stuck
+    if len(search_calls) >= 2:
+        has_flag = any(msg.get("role") == "tool" and msg.get("name") == "flag_price_outlier" for msg in messages)
+        if not has_flag:
+            # Check if latest searches are returning empty or very few results
+            recent_search_counts = [count for name, count in recent_tools if name == "search_awards"]
+            if recent_search_counts and all(c < 4 for c in recent_search_counts[-2:]):
+                # Two searches in a row with <4 results each = stuck
+                return True
+    
+    return False
 
 
 def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None):
     def plan(state: dict) -> dict:
         messages = state["messages"]
         
-        # Check if stuck in loop - force progression
+        # Check if stuck in loop - FORCE TOOL CALLS DIRECTLY
         if _is_stuck_in_loop(messages):
-            # Extract buyer, query, amount from the task
+            # Extract task details from original user message
             task_message = next((m for m in messages if m.get("role") == "user" and not m.get("nudge")), None)
+            
             if task_message:
-                content = task_message.get("content", "")
-                # Try to extract the key info
                 import re
+                content = task_message.get("content", "")
+                
+                # Extract buyer, query, amount
+                buyer_match = re.search(r'Buyer\s+([^r][^\n]+?)(?:\s+received)', content, re.IGNORECASE)
                 amount_match = re.search(r'KES\s+([\d,]+(?:\.\d{2})?)', content)
-                if amount_match:
-                    # Force the agent to call flag_price_outlier
-                    forced_message = {
-                        "role": "user",
-                        "content": "You've searched 3 times. Now call flag_price_outlier with the buyer, query, and quoted amount from the original request.",
-                        "nudge": True
+                for_match = re.search(r'for:\s*(.+?)(?:\s+Compare|\s*$)', content, re.IGNORECASE)
+                supplier_match = re.search(r'from supplier\s+(.+?)\s+for', content, re.IGNORECASE)
+                
+                if buyer_match and amount_match and for_match:
+                    buyer = buyer_match.group(1).strip()
+                    amount_str = amount_match.group(1).replace(',', '')
+                    amount = float(amount_str)
+                    query = for_match.group(1).strip()
+                    supplier = supplier_match.group(1).strip() if supplier_match else ""
+                    
+                    # FORCE flag_price_outlier call directly as if model called it
+                    forced_assistant = {
+                        "role": "assistant",
+                        "content": "Calling flag_price_outlier to handle this case.",
+                        "tool_calls": [{
+                            "name": "flag_price_outlier",
+                            "arguments": {
+                                "buyer": buyer,
+                                "query": query,
+                                "amount": amount,
+                                "currency": "KES",
+                                "supplier": supplier
+                            }
+                        }]
                     }
-                    return {"messages": messages + [forced_message], "steps": state["steps"]}
+                    return {"messages": messages + [forced_assistant], "steps": state["steps"] + 1}
         
         try:
             reply = model.chat(messages)
@@ -490,15 +524,26 @@ def run_agent(task: str, model: Any | None = None) -> dict:
             if payload.get("ok"):
                 draft = payload
     
-    # Check if agent got stuck searching repeatedly
-    if draft is None and _is_stuck_in_loop(state["messages"]):
-        error_msg = "Agent got stuck calling search_awards repeatedly. Try simplifying the purchase description."
-    elif draft is None and state["steps"] >= MAX_STEPS:
-        error_msg = "Agent reached maximum steps without completing the note."
-    elif draft is None:
-        error_msg = "Agent finished without drafting a note."
-    else:
-        error_msg = None
+    # Detailed error analysis
+    error_msg = None
+    if draft is None:
+        # Check what happened
+        searches = [m for m in state["messages"] if m.get("role") == "tool" and m.get("name") == "search_awards"]
+        flags = [m for m in state["messages"] if m.get("role") == "tool" and m.get("name") == "flag_price_outlier"]
+        
+        if len(searches) >= 2 and len(flags) == 0:
+            # Got stuck searching
+            last_search_count = searches[-1].get("result", {}).get("count", 0)
+            if last_search_count == 0:
+                error_msg = "No PPIP awards found for this buyer and purchase description. Try: (1) Use a more general description (e.g., 'office furniture' instead of specific items), or (2) Check if the buyer name matches what's published on PPIP."
+            else:
+                error_msg = f"Agent searched multiple times (found {last_search_count} awards) but didn't progress. Try simplifying the purchase description."
+        elif _is_stuck_in_loop(state["messages"]):
+            error_msg = "Agent got stuck in a search loop. Try simplifying the purchase description to match common PPIP terminology."
+        elif state["steps"] >= MAX_STEPS:
+            error_msg = "Agent reached maximum steps without completing the note. Try a simpler, more general purchase description."
+        else:
+            error_msg = "Agent stopped without drafting a note. This may be due to the model not understanding the request."
     
     return {
         "messages": state["messages"], 
