@@ -51,10 +51,7 @@
 
       {% if tool_history %}
       <section class="card">
-        <h3>Agent tool calls</h3>
-        <p class="small-text" style="margin-bottom: 10px;">
-          The agent planned this sequence and recovered from any errors:
-        </p>
+        <h3>Agent steps</h3>
         <div class="tool-history">
           {% for tc in tool_history %}
           <div class="tool-badge {% if tc.ok %}tool-badge-ok{% else %}tool-badge-fail{% endif %}">
@@ -111,12 +108,22 @@
           <div class="alert alert-error">{{ approve_error }}</div>
           {% endif %}
 
-          <p>
-            You are signed in as <strong>{{ officer }}</strong>.
-            Clicking Approve records your name on this note.
+          <p class="small-text" style="margin-bottom: 12px;">
+            Signed in as <strong>{{ officer }}</strong>
           </p>
+          
+          {# Streamlined: Approve & File in one click #}
+          <form method="post" action="/note/{{ note_id }}/approve-and-file">
+            <button type="submit" class="btn btn-primary btn-full" style="font-size: 16px; padding: 14px;">
+              Approve &amp; File
+            </button>
+          </form>
+
+          <div style="margin: 12px 0; text-align: center; color: var(--muted); font-size: 13px;">or</div>
+
+          {# Separate approve (for review workflow) #}
           <form method="post" action="/note/{{ note_id }}/approve">
-            <button type="submit" class="btn btn-primary btn-full">Approve as {{ officer }}</button>
+            <button type="submit" class="btn btn-secondary btn-full">Approve only</button>
           </form>
         {% endif %}
       </section>
@@ -166,11 +173,6 @@
       <section class="card">
         <h3>Comparable contracts ({{ finding.sources | length }})</h3>
         {% if finding.sources %}
-        <p class="small-text">
-          A contract is included when its title shares at least 2 content words with the
-          purchase description and those words carry ≥ 50% of the description's weight.
-          Rarer words count more.
-        </p>
         <div class="source-list">
           {% for s in finding.sources %}
           <div class="source-row {% if s.same_supplier %}source-same-supplier{% endif %}">

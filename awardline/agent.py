@@ -373,9 +373,44 @@ def _needs_nudge(messages: list[dict]) -> bool:
     return used < MAX_NUDGES
 
 
+def _is_stuck_in_loop(messages: list[dict]) -> bool:
+    """Detect if agent is calling search_awards repeatedly without progressing."""
+    # Count recent tool calls (last 6 messages, which is 3 assistant+tool pairs)
+    recent_tools = [
+        msg.get("name") 
+        for msg in messages[-6:] 
+        if msg.get("role") == "tool"
+    ]
+    
+    # If we've seen search_awards 3+ times without flag_price_outlier, we're stuck
+    search_count = recent_tools.count("search_awards")
+    has_flag = any(msg.get("role") == "tool" and msg.get("name") == "flag_price_outlier" for msg in messages)
+    
+    return search_count >= 3 and not has_flag
+
+
 def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None):
     def plan(state: dict) -> dict:
         messages = state["messages"]
+        
+        # Check if stuck in loop - force progression
+        if _is_stuck_in_loop(messages):
+            # Extract buyer, query, amount from the task
+            task_message = next((m for m in messages if m.get("role") == "user" and not m.get("nudge")), None)
+            if task_message:
+                content = task_message.get("content", "")
+                # Try to extract the key info
+                import re
+                amount_match = re.search(r'KES\s+([\d,]+(?:\.\d{2})?)', content)
+                if amount_match:
+                    # Force the agent to call flag_price_outlier
+                    forced_message = {
+                        "role": "user",
+                        "content": "You've searched 3 times. Now call flag_price_outlier with the buyer, query, and quoted amount from the original request.",
+                        "nudge": True
+                    }
+                    return {"messages": messages + [forced_message], "steps": state["steps"]}
+        
         try:
             reply = model.chat(messages)
         except Exception as exc:
@@ -454,4 +489,20 @@ def run_agent(task: str, model: Any | None = None) -> dict:
             payload = message.get("result") or json.loads(message["content"])
             if payload.get("ok"):
                 draft = payload
-    return {"messages": state["messages"], "draft": draft, "steps": state["steps"]}
+    
+    # Check if agent got stuck searching repeatedly
+    if draft is None and _is_stuck_in_loop(state["messages"]):
+        error_msg = "Agent got stuck calling search_awards repeatedly. Try simplifying the purchase description."
+    elif draft is None and state["steps"] >= MAX_STEPS:
+        error_msg = "Agent reached maximum steps without completing the note."
+    elif draft is None:
+        error_msg = "Agent finished without drafting a note."
+    else:
+        error_msg = None
+    
+    return {
+        "messages": state["messages"], 
+        "draft": draft, 
+        "steps": state["steps"],
+        "error": error_msg
+    }

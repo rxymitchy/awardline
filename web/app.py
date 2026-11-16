@@ -67,12 +67,11 @@ def _start_agent_run(task: str) -> str:
             result = await asyncio.to_thread(run_agent, task, OllamaModel())
             agent_runs[run_id]["messages"] = result["messages"]
             agent_runs[run_id]["draft"] = result.get("draft")
+            agent_runs[run_id]["error"] = result.get("error")  # Use the error from agent
             agent_runs[run_id]["status"] = "complete" if result.get("draft") else "failed"
-            if not result.get("draft"):
-                agent_runs[run_id]["error"] = "Agent finished without drafting a note."
         except Exception as exc:
             agent_runs[run_id]["status"] = "failed"
-            agent_runs[run_id]["error"] = str(exc)
+            agent_runs[run_id]["error"] = f"Agent crashed: {str(exc)}"
 
     asyncio.create_task(_run())
     return run_id
@@ -298,6 +297,50 @@ async def approve_note(request: Request, note_id: str):
     return RedirectResponse(f"/note/{note_id}", status_code=303)
 
 
+@app.post("/note/{note_id}/approve-and-file", response_class=HTMLResponse)
+async def approve_and_file_note(request: Request, note_id: str):
+    """Streamlined workflow: approve and file in one action."""
+    redirect = _require_officer(request)
+    if redirect:
+        return redirect
+
+    officer = _officer(request)
+    
+    # Step 1: Approve
+    approval_result = record_approval(note_id, officer)
+    if not approval_result.get("ok"):
+        draft = draft_for(note_id)
+        finding = draft.get("finding", {}) if draft else {}
+        return _t(request, "note.html", {
+            "officer": officer,
+            "draft": draft,
+            "finding": finding,
+            "approval": None,
+            "already_filed": False,
+            "note_id": note_id,
+            "approve_error": approval_result.get("error"),
+        })
+    
+    # Step 2: File
+    file_result = file_committee_note(note_id)
+    if not file_result.get("ok"):
+        draft = draft_for(note_id)
+        finding = draft.get("finding", {}) if draft else {}
+        approval = approval_for(note_id)
+        return _t(request, "note.html", {
+            "officer": officer,
+            "draft": draft,
+            "finding": finding,
+            "approval": approval,
+            "already_filed": False,
+            "note_id": note_id,
+            "file_error": file_result.get("error"),
+        })
+    
+    # Success: redirect to filings list
+    return RedirectResponse("/filings", status_code=303)
+
+
 @app.post("/note/{note_id}/file", response_class=HTMLResponse)
 async def file_note(request: Request, note_id: str):
     redirect = _require_officer(request)
@@ -327,11 +370,15 @@ async def filings_list(request: Request):
     if redirect:
         return redirect
 
+    officer = _officer(request)
     ensure_runtime()
     filed = []
     for path in sorted(FILINGS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         note_id = path.stem
         approval = approval_for(note_id)
+        # Only show notes this officer approved
+        if not approval or approval.get("officer") != officer:
+            continue
         draft = draft_for(note_id)
         filed.append({
             "note_id": note_id,
@@ -343,7 +390,7 @@ async def filings_list(request: Request):
             "flagged": draft.get("finding", {}).get("flagged") if draft else None,
         })
 
-    return _t(request, "filings.html", {"officer": _officer(request), "filed": filed})
+    return _t(request, "filings.html", {"officer": officer, "filed": filed})
 
 
 @app.get("/filings/{note_id}", response_class=HTMLResponse)

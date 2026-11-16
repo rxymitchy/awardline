@@ -12,6 +12,12 @@ Both use the same LangGraph agent. The web form just constructs the task string 
 
 A Kenyan procuring entity's evaluation committee has to judge whether a quote is reasonable before it recommends an award. The practical check is what similar purchases cost last time. That history is on the Public Procurement Information Portal, which publishes thousands of award notices, but an officer still searches titles by hand and writes down the contracts they compared. A price several times a recent award can pass because nobody lined the figures up.
 
+**Current cost to user:** ~1,050 KES (1h 45min officer time) per evaluation  
+**With Awardline:** ~72 KES (10min) per evaluation  
+**Value created:** 978 KES saved + transparent, auditable price comparisons
+
+See [COST_MODEL.md](COST_MODEL.md) for full unit economics and scalability analysis.
+
 ## Solution overview
 
 The officer gives the buyer, the purchase, the quoted amount, and, if known, the quoting supplier. The agent searches 4,956 Kenya PPIP awards from the 2025/2026 and 2026/2027 release files. It keeps awards in the same currency whose titles share at least two content words with the quote, where those shared words carry at least half of the description's weight. Rare words count for more than common ones, so a fuel quote is not compared with tyre contracts just because both say "motor vehicles". When at least four comparable awards exist, it compares the quote with their median. A quote at least twice that median is flagged. Each source is listed with its OCID, buyer, title, supplier, amount, date, the PPIP file it came from, and the words that matched. If the history is too thin, no flag is raised. When a supplier is named, the note also lists that firm's past PPIP awards, merging spellings such as `Ltd` and `Limited` and showing every name it merged. The agent then drafts a committee note from that flag. It cannot invent an OCID or an amount.
@@ -70,14 +76,13 @@ Start the web server:
 
 Then open http://localhost:8000 in your browser.
 
-1. **Sign in** with your name (e.g. "Amina Yusuf") — your name is recorded on every note you approve
+1. **Sign in** with your name (e.g. "Amina Yusuf")
 2. **Check a quote** — fill the form with buyer, item, amount, and supplier
-3. **Agent works** — watch tool calls appear in real time as the agent searches PPIP, flags outliers, checks supplier history, and drafts the note (2-3 minutes)
-4. **Review results** — see the verdict (FLAG / NO FLAG / INSUFFICIENT DATA), all sources with OCIDs, median, ratio, and full committee note text
-5. **Approve** — click Approve to record your name on the note
-6. **File** — the note lands in the `filings/` folder via the filesystem MCP server
+3. **Agent works** — watch tool calls appear as the agent searches PPIP, flags outliers, and drafts the note (2-3 minutes)
+4. **Review results** — see the verdict, numbered sources with OCIDs, median, ratio, and committee note
+5. **Approve & File** — one button to approve and file to the committee folder
 
-The web UI runs the same `run_agent()` function as the CLI — no business logic is duplicated. The form just constructs the task string.
+**Privacy:** Each officer only sees notes they approved. Notes filed by other officers are not visible to you.
 
 ---
 

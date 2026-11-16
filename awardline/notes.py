@@ -104,86 +104,171 @@ def tool_draft_committee_note(
 def render_note(finding: dict) -> str:
     currency = finding["currency"]
     lines = [
-        f"# Committee note {finding['note_id']}",
+        f"# Committee Value-for-Money Note",
+        f"Note ID: {finding['note_id']} | Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         "",
-        "Awardline prepared this note from published Kenya PPIP awards. It does not award a tender.",
+        "═" * 80,
+        "## EXECUTIVE SUMMARY",
+        "═" * 80,
         "",
-        f"Buyer: {finding['buyer'] or 'not specified'}",
-        f"Purchase: {finding['query']}",
     ]
-    if finding.get("supplier"):
-        lines.append(f"Quoting supplier: {finding['supplier']}")
-    lines += [
-        f"Quoted amount: {currency} {finding['amount']:,.2f}",
-        f"Finding: {'FLAG' if finding['flagged'] else 'NO FLAG'} ({finding['reason']})",
-    ]
-    if finding.get("median") is not None:
-        lines.append(
-            f"Basis: median of {finding['comparable_count']} past awards is "
-            f"{currency} {finding['median']:,.2f} (quoted / median = {finding['ratio']})."
-        )
+    
+    # Clear verdict section
+    if finding['flagged']:
+        lines += [
+            "🚩 **PRICE FLAG RAISED**",
+            "",
+            f"The quoted amount of {currency} {finding['amount']:,.2f} is **{finding['ratio']}× the median**",
+            f"of {finding['comparable_count']} comparable past awards (median: {currency} {finding.get('median', 0):,.2f}).",
+            "",
+            "**Recommendation:** Committee should request justification from the supplier or seek",
+            "alternative quotes before award.",
+        ]
+    elif finding.get("median") is not None:
+        lines += [
+            "✅ **NO PRICE FLAG**",
+            "",
+            f"The quoted amount of {currency} {finding['amount']:,.2f} is **{finding['ratio']}× the median**",
+            f"of {finding['comparable_count']} comparable past awards (median: {currency} {finding.get('median', 0):,.2f}).",
+            "",
+            "The quote falls within reasonable range based on published PPIP awards.",
+        ]
     else:
-        lines.append(
-            f"Basis: only {finding['comparable_count']} comparable awards. "
-            f"A flag needs at least {MIN_HISTORY}. No price flag was raised."
-        )
+        lines += [
+            "⚠️ **INSUFFICIENT DATA**",
+            "",
+            f"Only {finding['comparable_count']} comparable awards found in the snapshot.",
+            f"At least {MIN_HISTORY} awards are needed to calculate a reliable median and flag outliers.",
+            "",
+            "**Recommendation:** Proceed with standard due diligence. No automated flag was raised.",
+        ]
+    
     lines += [
         "",
-        "How sources were chosen: a past award is included when its title shares at least two "
-        f"content words with the purchase and those words carry at least {int(MIN_COVERAGE * 100)}% "
-        "of the purchase description's weight. Rare words such as a product name count for more "
-        "than common words such as \"motor\" or \"vehicles\".",
+        "─" * 80,
+        "## QUOTE DETAILS",
+        "─" * 80,
         "",
-        "Sources:",
+        f"**Procuring Entity:**    {finding['buyer'] or 'Not specified'}",
+        f"**Purchase Description:** {finding['query']}",
     ]
+    
+    if finding.get("supplier"):
+        lines.append(f"**Quoting Supplier:**     {finding['supplier']}")
+    
+    lines.append(f"**Quoted Amount:**        {currency} {finding['amount']:,.2f}")
+    
+    lines += [
+        "",
+        "─" * 80,
+        "## COMPARABLE PPIP AWARDS",
+        "─" * 80,
+        "",
+        "**Source Selection Criteria:**",
+        f"Awards are included when their title shares at least 2 content words with the purchase",
+        f"description, where those words carry ≥{int(MIN_COVERAGE * 100)}% of the description's word weight.",
+        "Rare/specific words (product names) count more than common words (\"supply\", \"motor\").",
+        "",
+    ]
+    
     if not finding["sources"]:
-        lines.append("- None. An unsourced flag is not allowed.")
-    for source in finding["sources"]:
-        matched = ", ".join(source.get("matched_words") or []) or "n/a"
-        same = " | SAME SUPPLIER" if source.get("same_supplier") else ""
-        lines.append(
-            f"- {source['ocid']} | {source['buyer']} | {source['title']} | {source['supplier']} | "
-            f"{source['currency']} {source['amount']:,.2f} | {source['date']} | {source['source_url']} | "
-            f"matched on: {matched}{same}"
-        )
+        lines.append("❌ **No comparable awards found.** An unsourced price flag cannot be raised.")
+    else:
+        lines.append(f"**Found {len(finding['sources'])} comparable awards:**")
+        lines.append("")
+        
+        # Numbered source table with clear structure
+        for idx, source in enumerate(finding["sources"], 1):
+            same_tag = " 🔴 SAME SUPPLIER" if source.get("same_supplier") else ""
+            matched = ", ".join(source.get("matched_words") or [])
+            
+            lines += [
+                f"**[{idx}]** {source['ocid']}{same_tag}",
+                f"     Buyer:    {source['buyer']}",
+                f"     Title:    {source['title']}",
+                f"     Supplier: {source['supplier'] or '(not recorded)'}",
+                f"     Amount:   {source['currency']} {source['amount']:,.2f}",
+                f"     Date:     {source['date']}",
+                f"     Matched:  {matched}",
+                f"     Source:   {source['source_url']}",
+                "",
+            ]
+    
+    # Supplier history section
     history = finding.get("supplier_history")
-    if history is not None:
-        lines += ["", f"Supplier history for {history['supplier']}:"]
-        if not history["award_count"]:
-            lines.append("- No past PPIP awards to this supplier in the snapshot.")
-        else:
-            lines.append(
-                f"- {history['award_count']} past PPIP awards, total {currency} {history['total_amount']:,.2f}."
-            )
-            if len(history["names_merged"]) > 1:
-                lines.append(
-                    "- Names treated as the same firm (only case, punctuation, \"M/S\", a postal address, "
-                    "and Ltd/Limited/Co/Company/PLC were ignored): " + "; ".join(history["names_merged"])
-                )
-            else:
-                lines.append(f"- Published under one name: {history['names_merged'][0]}")
-            for award in history["awards"]:
-                lines.append(
-                    f"- {award['ocid']} | {award['buyer']} | {award['title']} | {award['supplier']} | "
-                    f"{award['currency']} {award['amount']:,.2f} | {award['date']}"
-                )
+    if history is not None and history.get("award_count", 0) > 0:
+        lines += [
+            "─" * 80,
+            f"## SUPPLIER HISTORY: {history['supplier']}",
+            "─" * 80,
+            "",
+            f"**Total Past PPIP Awards:** {history['award_count']} contracts",
+            f"**Total Value:**            {currency} {history['total_amount']:,.2f}",
+            "",
+        ]
+        
+        if len(history["names_merged"]) > 1:
+            lines += [
+                "**Name Variants Merged:**",
+                "(Case, punctuation, M/S prefix, postal addresses, and Ltd/Limited/Co/Company/PLC ignored)",
+            ]
+            for name in history["names_merged"]:
+                lines.append(f"  • {name}")
+            lines.append("")
+        
+        lines.append("**Past Awards:**")
+        lines.append("")
+        
+        for idx, award in enumerate(history["awards"], 1):
+            lines += [
+                f"**[{idx}]** {award['ocid']}",
+                f"     Buyer:    {award['buyer']}",
+                f"     Title:    {award['title']}",
+                f"     Amount:   {award['currency']} {award['amount']:,.2f}",
+                f"     Date:     {award['date']}",
+                "",
+            ]
+    
+    # Data source section
     snapshot = finding.get("snapshot")
     if snapshot:
         when = (snapshot.get("retrieved_at") or "")[:10] or "date not recorded"
         lines += [
+            "─" * 80,
+            "## DATA SOURCE",
+            "─" * 80,
             "",
-            f"Data: Kenya PPIP snapshot of {snapshot['award_count']:,} awards "
-            f"({', '.join(snapshot.get('files') or [])}), downloaded {when}. "
-            "Run `python -m awardline refresh` to update it.",
+            f"**Snapshot:** Kenya PPIP, {snapshot['award_count']:,} awards",
+            f"**Files:**    {', '.join(snapshot.get('files') or [])}",
+            f"**Downloaded:** {when}",
+            f"**Note:** Run `python -m awardline refresh` to update the snapshot.",
         ]
+    
     lines += [
         "",
-        "Caveats for the committee:",
-        "- PPIP award amounts are contract totals. They carry no quantities or units, so check that "
-        "each source is the same kind and size of purchase before relying on the median.",
-        "- A past award may itself have been overpriced. The median is a reference point, not a fair price.",
+        "═" * 80,
+        "## IMPORTANT CAVEATS",
+        "═" * 80,
         "",
-        "A named officer must approve this note before it is filed.",
+        "⚠️  **Contract Totals vs. Unit Prices:**",
+        "    PPIP awards show only contract totals, not quantities or units. Verify that each",
+        "    comparable source represents the same kind and scale of purchase before relying on",
+        "    the median.",
+        "",
+        "⚠️  **Past Awards May Be Overpriced:**",
+        "    A past PPIP award may itself have been inflated. The median is a reference point",
+        "    for reasonableness, not a certified fair price.",
+        "",
+        "⚠️  **Human Judgment Required:**",
+        "    This note is a decision support tool. The committee retains full responsibility",
+        "    for the award decision.",
+        "",
+        "═" * 80,
+        "",
+        "**Prepared by:** Awardline agent (MCP-based procurement analysis tool)",
+        "**Approved by:** [Officer name recorded upon approval]",
+        "**Status:** This note does not award a tender. Officer approval required before filing.",
+        "",
     ]
     return "\n".join(lines)
 
