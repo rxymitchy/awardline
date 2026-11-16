@@ -321,8 +321,8 @@ async def approve_and_file_note(request: Request, note_id: str):
             "approve_error": approval_result.get("error"),
         })
     
-    # Step 2: File
-    file_result = file_committee_note(note_id)
+    # Step 2: File (run in thread to avoid event loop conflict)
+    file_result = await asyncio.to_thread(file_committee_note, note_id)
     if not file_result.get("ok"):
         draft = draft_for(note_id)
         finding = draft.get("finding", {}) if draft else {}
@@ -347,7 +347,8 @@ async def file_note(request: Request, note_id: str):
     if redirect:
         return redirect
 
-    result = file_committee_note(note_id)
+    # Run in thread to avoid event loop conflict
+    result = await asyncio.to_thread(file_committee_note, note_id)
     if not result.get("ok"):
         draft = draft_for(note_id)
         finding = draft.get("finding", {}) if draft else {}
