@@ -135,6 +135,15 @@ The server we did not write is `@modelcontextprotocol/server-filesystem`. It can
 4. The officer runs `python -m awardline approve --note-id <id> --officer "<name>"`. That command is not a tool the model can call. Names shorter than 3 characters, and the names `agent`, `awardline`, and `model`, are rejected. The log line has `"actor": "human"`.
 5. `python -m awardline file --note-id <id>` calls the filesystem MCP server, which writes `filings/<note_id>.md`.
 
+## Security considerations
+
+**Authentication:** The current web UI uses a simple name-based login for demo purposes. For production deployment, integrate organizational SSO (Single Sign-On) such as:
+- **Azure AD/Entra ID** for Microsoft-based organizations
+- **Google Workspace** for Google-based organizations  
+- **Okta** or **Auth0** for enterprise identity management
+
+SSO provides centralized user management, audit trails, and eliminates the need for separate credentials.
+
 ## Limitations
 
 - Award amounts have no unit. The 2025/2026 and 2026/2027 PPIP packages contain no line items, quantities, or units, so the median compares contract totals. Every note says so, and lists the words that matched each source so the committee can drop one that is a different size of purchase.
