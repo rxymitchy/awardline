@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from awardline.agent import OllamaModel, run_agent
+from awardline.agent import OllamaModel, GroqModel, run_agent
 from awardline.notes import approval_for, draft_for, record_approval
 from awardline.drop import file_committee_note
 from awardline.paths import FILINGS, ensure_runtime
@@ -64,7 +64,13 @@ def _start_agent_run(task: str) -> str:
 
     async def _run():
         try:
-            result = await asyncio.to_thread(run_agent, task, OllamaModel())
+            # Choose model: Groq if API key is set, otherwise Ollama
+            if os.environ.get("GROQ_API_KEY"):
+                model = GroqModel()
+            else:
+                model = OllamaModel()
+            
+            result = await asyncio.to_thread(run_agent, task, model)
             agent_runs[run_id]["messages"] = result["messages"]
             agent_runs[run_id]["draft"] = result.get("draft")
             agent_runs[run_id]["error"] = result.get("error")  # Use the error from agent

@@ -227,6 +227,82 @@ class OllamaModel:
         return {"role": "assistant", "content": content, "tool_calls": tool_calls}
 
 
+class GroqModel:
+    """Groq cloud API model - fast and free during beta."""
+    
+    def __init__(self, model: str = None, api_key: str = None):
+        self.model = model or os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile")
+        self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
+        if not self.api_key:
+            raise ValueError("GROQ_API_KEY environment variable is required for GroqModel")
+        self.base_url = "https://api.groq.com/openai/v1"
+    
+    def chat(self, messages: list[dict]) -> dict:
+        # Convert tools to OpenAI format (Groq uses OpenAI-compatible API)
+        groq_tools = []
+        for tool in TOOLS:
+            groq_tools.append({
+                "type": "function",
+                "function": tool["function"]
+            })
+        
+        # Prepare messages - filter out internal fields
+        groq_messages = []
+        for msg in messages:
+            cleaned = {
+                "role": msg["role"],
+                "content": msg.get("content", "")
+            }
+            # Handle tool messages
+            if msg["role"] == "tool":
+                cleaned["role"] = "tool"
+                cleaned["tool_call_id"] = msg.get("name", "call_unknown")
+                cleaned["name"] = msg.get("name", "unknown")
+            groq_messages.append(cleaned)
+        
+        response = httpx.post(
+            f"{self.base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": self.model,
+                "messages": groq_messages,
+                "tools": groq_tools,
+                "temperature": 0.1,
+                "max_tokens": 2048
+            },
+            timeout=180,
+        )
+        response.raise_for_status()
+        
+        choice = response.json()["choices"][0]
+        message = choice["message"]
+        content = message.get("content") or ""
+        
+        # Parse tool calls from Groq response
+        tool_calls = []
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") or {}
+            args = function.get("arguments") or "{}"
+            # Parse arguments if they're a string
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {}
+            tool_calls.append({
+                "name": function.get("name"),
+                "arguments": args
+            })
+        
+        if not tool_calls:
+            tool_calls = _tool_calls_from_text(content)
+        
+        return {"role": "assistant", "content": content, "tool_calls": tool_calls}
+
+
 class AgentState(TypedDict):
     messages: list[dict]
     steps: int

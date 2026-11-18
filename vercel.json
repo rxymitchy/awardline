@@ -21,7 +21,7 @@
   ],
   "env": {
     "AWARDLINE_SECRET": "@awardline-secret",
-    "AWARDLINE_OLLAMA": "@awardline-ollama-url",
-    "AWARDLINE_MODEL": "qwen2.5:3b"
+    "GROQ_API_KEY": "@groq-api-key",
+    "GROQ_MODEL": "llama-3.1-70b-versatile"
   }
 }
