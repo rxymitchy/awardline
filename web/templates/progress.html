@@ -27,12 +27,43 @@ async function checkStatus() {
     const response = await fetch(statusUrl);
     const data = await response.json();
     
-    // Update tool log
+    // Update tool log with icons
     const logEl = document.getElementById('tool-log');
-    logEl.innerHTML = data.tool_calls.map(tc => {
-      const icon = tc.ok ? '✓' : '✗';
+    logEl.innerHTML = data.tool_calls.map((tc, index) => {
+      const statusIcon = tc.ok ? '✓' : '✗';
       const cls = tc.ok ? 'tool-ok' : 'tool-fail';
-      return `<div class="tool-call ${cls}">${icon} ${tc.name}</div>`;
+      const isLast = index === data.tool_calls.length - 1;
+      const animClass = (data.status === 'running' && isLast) ? 'tool-active' : '';
+      
+      // Map tool names to icons and friendly labels
+      let processIcon = '⚙️';
+      let label = tc.name;
+      
+      if (tc.name.includes('search') || tc.name.includes('retrieve')) {
+        processIcon = '🔍';
+        label = 'Searching awards database';
+      } else if (tc.name.includes('compare') || tc.name.includes('analyze')) {
+        processIcon = '⚖️';
+        label = 'Comparing prices';
+      } else if (tc.name.includes('draft') || tc.name.includes('write')) {
+        processIcon = '✍️';
+        label = 'Writing committee note';
+      } else if (tc.name.includes('filter') || tc.name.includes('rank')) {
+        processIcon = '🎯';
+        label = 'Filtering results';
+      } else if (tc.name.includes('extract') || tc.name.includes('parse')) {
+        processIcon = '📄';
+        label = 'Extracting data';
+      } else if (tc.name.includes('file') || tc.name.includes('save')) {
+        processIcon = '💾';
+        label = 'Saving note';
+      }
+      
+      return `<div class="tool-call ${cls} ${animClass}">
+        <span class="process-icon">${processIcon}</span>
+        <span class="tool-label">${label}</span>
+        <span class="status-icon">${statusIcon}</span>
+      </div>`;
     }).join('');
 
     if (data.status === 'complete') {
@@ -85,6 +116,10 @@ pollInterval = setInterval(checkStatus, 1500);
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
 #status-heading {
   font-size: 22px;
   margin-bottom: 12px;
@@ -105,14 +140,41 @@ pollInterval = setInterval(checkStatus, 1500);
 }
 .tool-call {
   background: var(--bg);
-  padding: 8px 16px;
-  border-radius: 6px;
+  padding: 12px 16px;
+  border-radius: 8px;
   font-size: 14px;
-  font-family: ui-monospace, monospace;
-  min-width: 280px;
+  min-width: 320px;
   text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: all 0.3s ease;
 }
-.tool-ok { color: var(--success); border-left: 3px solid var(--success); }
-.tool-fail { color: var(--danger); border-left: 3px solid var(--danger); }
+.tool-call .process-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.tool-call .tool-label {
+  flex: 1;
+  font-weight: 500;
+}
+.tool-call .status-icon {
+  flex-shrink: 0;
+  font-weight: bold;
+  font-size: 16px;
+}
+.tool-ok { 
+  color: var(--success); 
+  border-left: 3px solid var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--bg));
+}
+.tool-fail { 
+  color: var(--danger); 
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg));
+}
+.tool-active {
+  animation: pulse 1.5s ease-in-out infinite;
+}
 </style>
 {% endblock %}

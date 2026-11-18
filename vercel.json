@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "web/app.py",
+      "use": "@vercel/python",
+      "config": {
+        "maxLambdaSize": "50mb"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "dest": "web/static/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "web/app.py"
+    }
+  ],
+  "env": {
+    "AWARDLINE_SECRET": "@awardline-secret",
+    "AWARDLINE_OLLAMA": "@awardline-ollama-url",
+    "AWARDLINE_MODEL": "qwen2.5:3b"
+  }
+}
