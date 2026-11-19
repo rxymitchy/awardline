@@ -246,36 +246,73 @@ class GroqModel:
                 "function": tool["function"]
             })
         
-        # Prepare messages - filter out internal fields
+        # Prepare messages - filter out internal fields and handle tool calls properly
         groq_messages = []
-        for msg in messages:
-            cleaned = {
-                "role": msg["role"],
-                "content": msg.get("content", "")
-            }
-            # Handle tool messages
-            if msg["role"] == "tool":
-                cleaned["role"] = "tool"
-                cleaned["tool_call_id"] = msg.get("name", "call_unknown")
-                cleaned["name"] = msg.get("name", "unknown")
-            groq_messages.append(cleaned)
+        tool_call_id_counter = 0
         
-        response = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            },
-            json={
-                "model": self.model,
-                "messages": groq_messages,
-                "tools": groq_tools,
-                "temperature": 0.1,
-                "max_tokens": 2048
-            },
-            timeout=180,
-        )
-        response.raise_for_status()
+        for msg in messages:
+            role = msg["role"]
+            
+            if role == "system":
+                groq_messages.append({
+                    "role": "system",
+                    "content": msg.get("content", "")
+                })
+            elif role == "user":
+                groq_messages.append({
+                    "role": "user",
+                    "content": msg.get("content", "")
+                })
+            elif role == "assistant":
+                # Assistant messages with tool calls
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": msg.get("content") or None
+                }
+                if msg.get("tool_calls"):
+                    assistant_msg["tool_calls"] = []
+                    for tc in msg["tool_calls"]:
+                        tool_call_id_counter += 1
+                        assistant_msg["tool_calls"].append({
+                            "id": f"call_{tool_call_id_counter}",
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"]) if isinstance(tc["arguments"], dict) else tc["arguments"]
+                            }
+                        })
+                groq_messages.append(assistant_msg)
+            elif role == "tool":
+                # Tool result messages need proper tool_call_id
+                tool_call_id_counter += 1
+                groq_messages.append({
+                    "role": "tool",
+                    "tool_call_id": f"call_{tool_call_id_counter}",
+                    "name": msg.get("name", "unknown"),
+                    "content": msg.get("content", "")
+                })
+        
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": self.model,
+                    "messages": groq_messages,
+                    "tools": groq_tools,
+                    "temperature": 0.1,
+                    "max_tokens": 2048
+                },
+                timeout=180,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            # Log the error and return empty response
+            print(f"Groq API error: {e}", file=__import__('sys').stderr)
+            return {"role": "assistant", "content": f"API Error: {str(e)}", "tool_calls": []}
         
         choice = response.json()["choices"][0]
         message = choice["message"]
