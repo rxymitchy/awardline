@@ -231,7 +231,7 @@ class GroqModel:
     """Groq cloud API model - fast and free during beta."""
     
     def __init__(self, model: str = None, api_key: str = None):
-        self.model = model or os.environ.get("GROQ_MODEL", "llama-3.1-70b-versatile")
+        self.model = model or os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
         self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY environment variable is required for GroqModel")
