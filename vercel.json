@@ -12,11 +12,11 @@
   "routes": [
     {
       "src": "/static/(.*)",
-      "dest": "web/static/$1"
+      "dest": "/web/static/$1"
     },
     {
       "src": "/(.*)",
-      "dest": "web/app.py"
+      "dest": "/web/app.py"
     }
   ],
   "env": {}

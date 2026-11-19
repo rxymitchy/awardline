@@ -54,11 +54,12 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET)
 BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
 
-# Try to mount static files, but don't crash if it fails
-try:
-    app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
-except Exception as e:
-    print(f"Warning: Could not mount static files: {e}", file=sys.stderr)
+# Mount static files with absolute path
+static_dir = BASE / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+else:
+    print(f"Warning: Static directory not found at {static_dir}", file=sys.stderr)
 
 # Try to ensure runtime directories exist
 try:
