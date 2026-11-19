@@ -250,6 +250,8 @@ class GroqModel:
         groq_messages = []
         tool_call_id_counter = 0
         
+        print(f"GroqModel.chat called with {len(messages)} messages", file=__import__('sys').stderr)
+        
         for msg in messages:
             role = msg["role"]
             
@@ -292,6 +294,9 @@ class GroqModel:
                     "content": msg.get("content", "")
                 })
         
+        print(f"Sending {len(groq_messages)} messages to Groq with {len(groq_tools)} tools", file=__import__('sys').stderr)
+        print(f"Messages: {json.dumps(groq_messages, indent=2)[:1000]}", file=__import__('sys').stderr)
+        
         try:
             response = httpx.post(
                 f"{self.base_url}/chat/completions",
@@ -309,12 +314,19 @@ class GroqModel:
                 timeout=180,
             )
             response.raise_for_status()
+            
+            # Log the response for debugging
+            resp_json = response.json()
+            print(f"Groq response: {json.dumps(resp_json, indent=2)[:500]}", file=__import__('sys').stderr)
+            
         except httpx.HTTPError as e:
             # Log the error and return empty response
             print(f"Groq API error: {e}", file=__import__('sys').stderr)
+            if hasattr(e, 'response') and e.response:
+                print(f"Response body: {e.response.text}", file=__import__('sys').stderr)
             return {"role": "assistant", "content": f"API Error: {str(e)}", "tool_calls": []}
         
-        choice = response.json()["choices"][0]
+        choice = resp_json["choices"][0]
         message = choice["message"]
         content = message.get("content") or ""
         
