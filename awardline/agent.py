@@ -620,7 +620,9 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
 
 def run_agent(task: str, model: Any | None = None) -> dict:
     chosen = model or OllamaModel()
-    graph = build_graph(chosen, call_awardline_tool)
+    # Don't use MCP on serverless - call tools directly via DISPATCH
+    use_mcp = not (os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+    graph = build_graph(chosen, call_awardline_tool if use_mcp else None)
     state = graph.invoke(
         {
             "messages": [
