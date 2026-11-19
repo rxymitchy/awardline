@@ -17,6 +17,13 @@ import uuid
 from pathlib import Path
 from typing import Dict
 
+# Load .env file if it exists (for local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, skip
+
 # Make sure the project root is on the path when run directly.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

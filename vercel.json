@@ -20,8 +20,6 @@
     }
   ],
   "env": {
-    "AWARDLINE_SECRET": "@awardline-secret",
-    "GROQ_API_KEY": "@groq-api-key",
-    "GROQ_MODEL": "llama-3.1-70b-versatile"
+    "GROQ_API_KEY": "@groq-api-key"
   }
 }
