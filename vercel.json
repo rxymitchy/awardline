@@ -11,8 +11,8 @@
   ],
   "routes": [
     {
-      "src": "/static/(.*)",
-      "dest": "/web/static/$1"
+      "src": "/style.css",
+      "dest": "/public/style.css"
     },
     {
       "src": "/(.*)",
