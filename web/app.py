@@ -33,7 +33,13 @@ from awardline.paths import FILINGS, ensure_runtime
 
 # ── App setup ──────────────────────────────────────────────────────────────
 
-SECRET = os.environ.get("AWARDLINE_SECRET", "awardline-dev-secret-change-me")
+import secrets
+
+# Generate a secure random secret if not provided
+SECRET = os.environ.get("AWARDLINE_SECRET")
+if not SECRET:
+    SECRET = secrets.token_urlsafe(32)
+    print(f"⚠️  No AWARDLINE_SECRET set. Generated random secret for this session.", file=sys.stderr)
 
 app = FastAPI(title="Awardline")
 app.add_middleware(SessionMiddleware, secret_key=SECRET)
