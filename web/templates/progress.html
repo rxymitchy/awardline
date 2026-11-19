@@ -8,8 +8,8 @@
       <div class="spinner"></div>
     </div>
     
-    <h2 id="status-heading">Agent is working...</h2>
-    <p class="progress-task">{{ task }}</p>
+    <h2 id="status-heading">🤖 Agent is working...</h2>
+    <p class="progress-task" id="current-step">Initializing...</p>
 
     <div id="tool-log" class="tool-log"></div>
 
@@ -26,6 +26,31 @@ async function checkStatus() {
   try {
     const response = await fetch(statusUrl);
     const data = await response.json();
+    
+    // Update current step based on latest tool call
+    const currentStepEl = document.getElementById('current-step');
+    if (data.tool_calls && data.tool_calls.length > 0) {
+      const lastCall = data.tool_calls[data.tool_calls.length - 1];
+      let stepText = 'Processing...';
+      let stepIcon = '⚙️';
+      
+      if (lastCall.name.includes('search') || lastCall.name.includes('retrieve')) {
+        stepIcon = '🔍';
+        stepText = 'Searching awards database';
+      } else if (lastCall.name.includes('flag') || lastCall.name.includes('outlier')) {
+        stepIcon = '⚖️';
+        stepText = 'Comparing prices';
+      } else if (lastCall.name.includes('draft') || lastCall.name.includes('write')) {
+        stepIcon = '✍️';
+        stepText = 'Writing committee note';
+      }
+      
+      if (!lastCall.ok && data.status === 'running') {
+        stepText = 'Retrying...';
+      }
+      
+      currentStepEl.innerHTML = `${stepIcon} ${stepText}`;
+    }
     
     // Update tool log with icons
     const logEl = document.getElementById('tool-log');

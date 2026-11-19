@@ -88,17 +88,26 @@ def _start_agent_run(task: str) -> str:
     async def _run():
         try:
             # Choose model: Groq if API key is set, otherwise Ollama
-            if os.environ.get("GROQ_API_KEY"):
+            groq_key = os.environ.get("GROQ_API_KEY")
+            if groq_key:
+                print(f"Using Groq model with key: {groq_key[:10]}...", file=sys.stderr)
                 model = GroqModel()
             else:
+                print("Using Ollama model (no GROQ_API_KEY set)", file=sys.stderr)
                 model = OllamaModel()
             
+            print(f"Starting agent run {run_id} with task: {task[:100]}...", file=sys.stderr)
             result = await asyncio.to_thread(run_agent, task, model)
+            print(f"Agent run {run_id} completed. Draft: {bool(result.get('draft'))}, Error: {result.get('error')}", file=sys.stderr)
+            
             agent_runs[run_id]["messages"] = result["messages"]
             agent_runs[run_id]["draft"] = result.get("draft")
             agent_runs[run_id]["error"] = result.get("error")  # Use the error from agent
             agent_runs[run_id]["status"] = "complete" if result.get("draft") else "failed"
         except Exception as exc:
+            print(f"Agent run {run_id} crashed: {exc}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
             agent_runs[run_id]["status"] = "failed"
             agent_runs[run_id]["error"] = f"Agent crashed: {str(exc)}"
 
@@ -280,6 +289,24 @@ async def agent_status_api(request: Request, run_id: str):
         response["error"] = run.get("error", "Unknown error")
 
     return JSONResponse(response)
+
+
+@app.get("/api/run/{run_id}/debug")
+async def agent_debug_api(request: Request, run_id: str):
+    """Debug endpoint to see full agent state."""
+    run = agent_runs.get(run_id)
+    if run is None:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    
+    # Return full state for debugging
+    return JSONResponse({
+        "status": run["status"],
+        "task": run["task"],
+        "error": run.get("error"),
+        "message_count": len(run["messages"]),
+        "messages": run["messages"][-5:] if run["messages"] else [],  # Last 5 messages
+        "draft": run.get("draft"),
+    })
 
 
 @app.get("/note/{note_id}", response_class=HTMLResponse)
