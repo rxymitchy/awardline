@@ -53,9 +53,18 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET)
 
 BASE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
-app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
 
-ensure_runtime()
+# Try to mount static files, but don't crash if it fails
+try:
+    app.mount("/static", StaticFiles(directory=str(BASE / "static")), name="static")
+except Exception as e:
+    print(f"Warning: Could not mount static files: {e}", file=sys.stderr)
+
+# Try to ensure runtime directories exist
+try:
+    ensure_runtime()
+except Exception as e:
+    print(f"Warning: Could not create runtime directories: {e}", file=sys.stderr)
 
 # ── Agent run tracking ──────────────────────────────────────────────────────
 # In-memory store: run_id → agent state (messages, draft, status)
@@ -119,6 +128,15 @@ def _require_officer(request: Request):
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Vercel"""
+    return JSONResponse({
+        "status": "ok",
+        "groq_configured": bool(os.environ.get("GROQ_API_KEY")),
+        "platform": "vercel" if os.environ.get("VERCEL") else "other"
+    })
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
