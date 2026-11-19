@@ -231,13 +231,33 @@ class GroqModel:
     """Groq cloud API model - fast and free during beta."""
     
     def __init__(self, model: str = None, api_key: str = None):
-        self.model = model or os.environ.get("GROQ_MODEL", "llama-3.1-8b-instant")
+        # Use models that are currently active as of Nov 2024
+        # Check https://console.groq.com/docs/models for current list
+        self.model = model or os.environ.get("GROQ_MODEL", "llama3-groq-70b-8192-tool-use-preview")
         self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY environment variable is required for GroqModel")
         self.base_url = "https://api.groq.com/openai/v1"
     
     def chat(self, messages: list[dict]) -> dict:
+        # First, let's try to list available models to see what works
+        try:
+            models_response = httpx.get(
+                f"{self.base_url}/models",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=30
+            )
+            if models_response.status_code == 200:
+                available = [m.get("id") for m in models_response.json().get("data", [])]
+                print(f"Available Groq models: {available}", file=__import__('sys').stderr)
+                # Use the first available model that supports function calling
+                function_models = [m for m in available if any(x in m.lower() for x in ["llama", "mixtral", "gemma"])]
+                if function_models and self.model not in available:
+                    self.model = function_models[0]
+                    print(f"Switched to available model: {self.model}", file=__import__('sys').stderr)
+        except Exception as e:
+            print(f"Could not fetch models list: {e}", file=__import__('sys').stderr)
+        
         # Convert tools to OpenAI format (Groq uses OpenAI-compatible API)
         groq_tools = []
         for tool in TOOLS:
