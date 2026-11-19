@@ -130,6 +130,18 @@ def _require_officer(request: Request):
 
 # ── Routes ──────────────────────────────────────────────────────────────────
 
+@app.get("/style.css")
+async def serve_css():
+    """Serve CSS file directly for Vercel compatibility"""
+    css_path = Path(__file__).parent / "static" / "style.css"
+    if css_path.exists():
+        from fastapi.responses import Response
+        return Response(
+            content=css_path.read_text(encoding="utf-8"),
+            media_type="text/css"
+        )
+    return Response(content="/* CSS not found */", media_type="text/css")
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint for Vercel"""
