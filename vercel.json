@@ -19,7 +19,5 @@
       "dest": "web/app.py"
     }
   ],
-  "env": {
-    "GROQ_API_KEY": "@groq-api-key"
-  }
+  "env": {}
 }
