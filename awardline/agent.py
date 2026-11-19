@@ -240,7 +240,7 @@ class GroqModel:
         self.base_url = "https://api.groq.com/openai/v1"
     
     def chat(self, messages: list[dict]) -> dict:
-        # First, let's try to list available models to see what works
+        # Fetch available models and pick the best one for tool calling
         try:
             models_response = httpx.get(
                 f"{self.base_url}/models",
@@ -250,15 +250,23 @@ class GroqModel:
             if models_response.status_code == 200:
                 available = [m.get("id") for m in models_response.json().get("data", [])]
                 print(f"Available Groq models: {available}", file=__import__('sys').stderr)
-                # Use the first available model that supports function calling
-                function_models = [m for m in available if any(x in m.lower() for x in ["llama", "mixtral", "gemma"])]
-                if function_models and self.model not in available:
-                    self.model = function_models[0]
-                    print(f"Switched to available model: {self.model}", file=__import__('sys').stderr)
+                
+                # Priority list of known good chat/tool-use models
+                preferred = [
+                    "qwen/qwen3.8-27b",
+                    "allam-2-7b",
+                    "openai/gpt-oss-120b",
+                    "openai/gpt-oss-20b",
+                ]
+                for candidate in preferred:
+                    if candidate in available:
+                        self.model = candidate
+                        print(f"Selected model: {self.model}", file=__import__('sys').stderr)
+                        break
         except Exception as e:
             print(f"Could not fetch models list: {e}", file=__import__('sys').stderr)
-        
-        # Convert tools to OpenAI format (Groq uses OpenAI-compatible API)
+
+        # Convert tools to OpenAI format
         groq_tools = []
         for tool in TOOLS:
             groq_tools.append({
@@ -329,7 +337,7 @@ class GroqModel:
                     "messages": groq_messages,
                     "tools": groq_tools,
                     "temperature": 0.1,
-                    "max_tokens": 2048
+                    "max_tokens": 512
                 },
                 timeout=180,
             )
