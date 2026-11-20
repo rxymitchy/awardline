@@ -10,11 +10,15 @@ from awardline.paths import APPROVALS, DRAFTS, FLAGS, ensure_runtime
 from awardline.score import MIN_COVERAGE, MIN_HISTORY, flag_price_outlier
 
 
-def _key(buyer: str, query: str, amount: float, currency: str, supplier: str = "") -> str:
+def _key(buyer: str, query: str, amount: float, currency: str, supplier: str = "", officer: str = "") -> str:
     raw = f"{buyer.casefold()}|{query.casefold()}|{currency}|{amount:.2f}"
     # A quote with no supplier keeps the note_id it had before suppliers were tracked.
     if supplier_key(supplier):
         raw += f"|{supplier_key(supplier)}"
+    # Each officer gets their own independent note so one user's filing never
+    # blocks or overwrites another user checking the same quote.
+    if officer.strip():
+        raw += f"|{officer.strip().casefold()}"
     return "note-" + sha256(raw.encode("utf-8")).hexdigest()[:10]
 
 
@@ -32,7 +36,7 @@ def tool_search_awards(buyer: str = "", query: str = "", limit: int = 8) -> dict
 
 
 def tool_flag_price_outlier(
-    buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = ""
+    buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = "", officer: str = ""
 ) -> dict:
     ensure_runtime()
     try:
@@ -42,8 +46,9 @@ def tool_flag_price_outlier(
         log_call(caller(), "flag_price_outlier", {"buyer": buyer, "query": query, "amount": amount}, result, False)
         return result
     finding = flag_price_outlier(list(load_snapshot()), buyer, query, amount_f, currency or "KES", supplier or "")
-    note_id = _key(buyer, query, amount_f, currency or "KES", supplier or "")
+    note_id = _key(buyer, query, amount_f, currency or "KES", supplier or "", officer or "")
     finding["note_id"] = note_id
+    finding["officer"] = officer.strip() if officer else ""
     try:
         finding["snapshot"] = snapshot_info()
     except (OSError, ValueError):
@@ -54,7 +59,7 @@ def tool_flag_price_outlier(
     log_call(
         caller(),
         "flag_price_outlier",
-        {"buyer": buyer, "query": query, "amount": amount_f, "currency": currency, "supplier": supplier},
+        {"buyer": buyer, "query": query, "amount": amount_f, "currency": currency, "supplier": supplier, "officer": officer},
         finding,
         True,
     )
@@ -62,7 +67,7 @@ def tool_flag_price_outlier(
 
 
 def tool_draft_committee_note(
-    buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = ""
+    buyer: str, query: str, amount: float, currency: str = "KES", supplier: str = "", officer: str = ""
 ) -> dict:
     ensure_runtime()
     try:
@@ -71,7 +76,7 @@ def tool_draft_committee_note(
         result = {"ok": False, "error": "amount must be a number"}
         log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount}, result, False)
         return result
-    note_id = _key(buyer, query, amount_f, currency or "KES", supplier or "")
+    note_id = _key(buyer, query, amount_f, currency or "KES", supplier or "", officer or "")
     finding = _read_json(FLAGS / f"{note_id}.json")
     if finding is None:
         result = {
@@ -82,22 +87,21 @@ def tool_draft_committee_note(
             ),
             "note_id": note_id,
         }
-        log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f, "supplier": supplier}, result, False)
+        log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f, "supplier": supplier, "officer": officer}, result, False)
         return result
     text = render_note(finding)
-    # Every draft gets a fresh revision, so an approval given for an earlier draft
-    # with the same note_id does not carry over to this one.
     draft = {
         "note_id": note_id,
         "revision": uuid4().hex[:12],
         "drafted_at": datetime.now(timezone.utc).isoformat(),
         "text": text,
         "finding": finding,
+        "officer": officer.strip() if officer else "",
     }
     path = DRAFTS / f"{note_id}.json"
     path.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
     result = {"ok": True, "note_id": note_id, "revision": draft["revision"], "text": text, "filed": False}
-    log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f, "supplier": supplier}, result, True)
+    log_call(caller(), "draft_committee_note", {"buyer": buyer, "query": query, "amount": amount_f, "supplier": supplier, "officer": officer}, result, True)
     return result
 
 
@@ -267,7 +271,7 @@ def render_note(finding: dict) -> str:
         "=" * 80,
         "",
         "Prepared by: Awardline agent (MCP-based procurement analysis tool)",
-        "Approved by: [Officer name recorded upon approval]",
+        f"Approved by: {finding.get('officer') or '[Officer name recorded upon approval]'}",
         "Status:      This note does not award a tender. Officer approval required before filing.",
         "",
     ]

@@ -235,6 +235,8 @@ async def check_submit(
         "Compare it with published past awards and draft a value-for-money committee note. "
         "Do not award the tender."
     )
+    # Include the officer so the agent scopes the note_id to this user.
+    task_parts.append(f"Officer: {_officer(request)}")
     task = " ".join(task_parts)
 
     # Start the agent run in the background.

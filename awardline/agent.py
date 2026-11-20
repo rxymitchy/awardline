@@ -53,6 +53,7 @@ TOOLS = [
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
                     "supplier": {"type": "string", "description": "The quoting supplier, if the request names one."},
+                    "officer": {"type": "string", "description": "The name of the officer who submitted the request. Copy it exactly from the request."},
                 },
                 "required": ["buyer", "query", "amount"],
             },
@@ -71,6 +72,7 @@ TOOLS = [
                     "amount": {"type": "number"},
                     "currency": {"type": "string"},
                     "supplier": {"type": "string", "description": "The quoting supplier, if the request names one."},
+                    "officer": {"type": "string", "description": "The name of the officer who submitted the request. Copy it exactly from the request."},
                 },
                 "required": ["buyer", "query", "amount"],
             },
@@ -102,6 +104,7 @@ Plan, then call tools:
 5. Stop when the draft is ready. You may try file_committee_note, and if it refuses, stop and say the officer must approve.
 
 If the request names the quoting supplier, pass it as supplier to both flag_price_outlier and draft_committee_note.
+If the request names the officer (e.g. "Officer: Amina Yusuf"), pass their name as officer to both flag_price_outlier and draft_committee_note. This ensures each officer's note is filed independently.
 Every finding must come from tool output.
 Copy the quoted amount exactly. Do not round it or drop a zero.
 """
@@ -118,6 +121,7 @@ DISPATCH = {
         amount=args.get("amount"),
         currency=args.get("currency") or "KES",
         supplier=args.get("supplier") or "",
+        officer=args.get("officer") or "",
     ),
     "draft_committee_note": lambda args: tool_draft_committee_note(
         buyer=args.get("buyer", ""),
@@ -125,6 +129,7 @@ DISPATCH = {
         amount=args.get("amount"),
         currency=args.get("currency") or "KES",
         supplier=args.get("supplier") or "",
+        officer=args.get("officer") or "",
     ),
     "file_committee_note": lambda args: file_committee_note(args.get("note_id", "")),
 }
@@ -568,11 +573,12 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
                 import re
                 content = task_message.get("content", "")
                 
-                # Extract buyer, query, amount
+                # Extract buyer, query, amount, supplier, officer
                 buyer_match = re.search(r'Buyer\s+([^r][^\n]+?)(?:\s+received)', content, re.IGNORECASE)
                 amount_match = re.search(r'KES\s+([\d,]+(?:\.\d{2})?)', content)
                 for_match = re.search(r'for:\s*(.+?)(?:\s+Compare|\s*$)', content, re.IGNORECASE)
                 supplier_match = re.search(r'from supplier\s+(.+?)\s+for', content, re.IGNORECASE)
+                officer_match = re.search(r'Officer:\s*(.+?)(?:\s*$)', content, re.IGNORECASE | re.MULTILINE)
                 
                 if buyer_match and amount_match and for_match:
                     buyer = buyer_match.group(1).strip()
@@ -580,6 +586,7 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
                     amount = float(amount_str)
                     query = for_match.group(1).strip()
                     supplier = supplier_match.group(1).strip() if supplier_match else ""
+                    officer = officer_match.group(1).strip() if officer_match else ""
                     
                     # FORCE flag_price_outlier call directly as if model called it
                     forced_assistant = {
@@ -592,7 +599,8 @@ def build_graph(model: Any, call_tool: Callable[[str, dict], dict] | None = None
                                 "query": query,
                                 "amount": amount,
                                 "currency": "KES",
-                                "supplier": supplier
+                                "supplier": supplier,
+                                "officer": officer,
                             }
                         }]
                     }
