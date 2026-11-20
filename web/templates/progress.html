@@ -8,8 +8,8 @@
       <div class="spinner"></div>
     </div>
     
-    <h2 id="status-heading">🤖 Agent is working...</h2>
-    <p class="progress-task" id="current-step">Initializing...</p>
+    <h2 id="status-heading">🤖 Agent is working…</h2>
+    <p class="progress-task" id="current-step">Agent is reading your request…</p>
 
     <div id="tool-log" class="tool-log"></div>
 
@@ -22,71 +22,88 @@ const runId = "{{ run_id }}";
 const statusUrl = `/api/run/${runId}/status`;
 let pollInterval;
 
+// Map raw tool names to human-readable labels and icons.
+const TOOL_META = {
+  search_awards:        { icon: '🔍', label: 'Searching PPIP awards database' },
+  flag_price_outlier:   { icon: '⚖️', label: 'Comparing your quoted price with past contracts' },
+  draft_committee_note: { icon: '✍️', label: 'Drafting value-for-money committee note' },
+  file_committee_note:  { icon: '💾', label: 'Filing note to committee folder' },
+};
+
+function toolMeta(name) {
+  if (TOOL_META[name]) return TOOL_META[name];
+  if (name.includes('search') || name.includes('retrieve')) return { icon: '🔍', label: 'Searching awards database' };
+  if (name.includes('flag') || name.includes('outlier'))    return { icon: '⚖️', label: 'Comparing prices with found records' };
+  if (name.includes('draft') || name.includes('write'))     return { icon: '✍️', label: 'Drafting committee note' };
+  if (name.includes('file') || name.includes('save'))       return { icon: '💾', label: 'Filing note' };
+  return { icon: '⚙️', label: name };
+}
+
+// Running step counter to give each call a sequence number (e.g. 2nd search).
+const toolCounts = {};
+
 async function checkStatus() {
   try {
     const response = await fetch(statusUrl);
     const data = await response.json();
     
-    // Update current step based on latest tool call
+    // Update the subtitle to describe exactly what the agent just did or is doing.
     const currentStepEl = document.getElementById('current-step');
-    if (data.tool_calls && data.tool_calls.length > 0) {
-      const lastCall = data.tool_calls[data.tool_calls.length - 1];
-      let stepText = 'Processing...';
-      let stepIcon = '⚙️';
-      
-      if (lastCall.name.includes('search') || lastCall.name.includes('retrieve')) {
-        stepIcon = '🔍';
-        stepText = 'Searching awards database';
-      } else if (lastCall.name.includes('flag') || lastCall.name.includes('outlier')) {
-        stepIcon = '⚖️';
-        stepText = 'Comparing prices';
-      } else if (lastCall.name.includes('draft') || lastCall.name.includes('write')) {
-        stepIcon = '✍️';
-        stepText = 'Writing committee note';
+    if (data.status === 'running') {
+      if (!data.tool_calls || data.tool_calls.length === 0) {
+        currentStepEl.textContent = 'Agent is reading your request…';
+      } else {
+        const lastCall = data.tool_calls[data.tool_calls.length - 1];
+        const meta = toolMeta(lastCall.name);
+        if (!lastCall.ok) {
+          currentStepEl.textContent = `${meta.icon} Retrying — adjusting parameters…`;
+        } else {
+          // Describe the next expected step based on what just finished.
+          if (lastCall.name === 'search_awards') {
+            currentStepEl.textContent = '⚖️ Agent is comparing your quoted price with found records…';
+          } else if (lastCall.name === 'flag_price_outlier') {
+            currentStepEl.textContent = '✍️ Agent is writing the committee note…';
+          } else if (lastCall.name === 'draft_committee_note') {
+            currentStepEl.textContent = '✅ Note drafted — finishing up…';
+          } else {
+            currentStepEl.textContent = `${meta.icon} ${meta.label}…`;
+          }
+        }
       }
-      
-      if (!lastCall.ok && data.status === 'running') {
-        stepText = 'Retrying...';
-      }
-      
-      currentStepEl.innerHTML = `${stepIcon} ${stepText}`;
     }
-    
-    // Update tool log with icons
+
+    // Build the tool log — one row per completed call.
     const logEl = document.getElementById('tool-log');
+    // Track call counts per tool to label repeated searches (e.g. "Search #2").
+    const counts = {};
     logEl.innerHTML = data.tool_calls.map((tc, index) => {
+      const meta = toolMeta(tc.name);
+      counts[tc.name] = (counts[tc.name] || 0) + 1;
+      const n = counts[tc.name];
+
+      // Build a specific, informative label for each step.
+      let detailLabel;
+      if (tc.name === 'search_awards') {
+        detailLabel = n === 1
+          ? `${meta.icon} Searching PPIP awards database for comparable contracts`
+          : `${meta.icon} Searching again with broader terms (attempt ${n})`;
+      } else if (tc.name === 'flag_price_outlier') {
+        detailLabel = `${meta.icon} Comparing your quoted price with ${tc.comparable_count !== undefined ? tc.comparable_count + ' found contracts' : 'past contracts'}`;
+      } else if (tc.name === 'draft_committee_note') {
+        detailLabel = `${meta.icon} Writing the value-for-money committee note`;
+      } else if (tc.name === 'file_committee_note') {
+        detailLabel = `${meta.icon} Filing note to the committee drop folder`;
+      } else {
+        detailLabel = `${meta.icon} ${meta.label}`;
+      }
+
       const statusIcon = tc.ok ? '✓' : '✗';
       const cls = tc.ok ? 'tool-ok' : 'tool-fail';
       const isLast = index === data.tool_calls.length - 1;
-      const animClass = (data.status === 'running' && isLast) ? 'tool-active' : '';
-      
-      // Map tool names to icons and friendly labels
-      let processIcon = '⚙️';
-      let label = tc.name;
-      
-      if (tc.name.includes('search') || tc.name.includes('retrieve')) {
-        processIcon = '🔍';
-        label = 'Searching awards database';
-      } else if (tc.name.includes('compare') || tc.name.includes('analyze')) {
-        processIcon = '⚖️';
-        label = 'Comparing prices';
-      } else if (tc.name.includes('draft') || tc.name.includes('write')) {
-        processIcon = '✍️';
-        label = 'Writing committee note';
-      } else if (tc.name.includes('filter') || tc.name.includes('rank')) {
-        processIcon = '🎯';
-        label = 'Filtering results';
-      } else if (tc.name.includes('extract') || tc.name.includes('parse')) {
-        processIcon = '📄';
-        label = 'Extracting data';
-      } else if (tc.name.includes('file') || tc.name.includes('save')) {
-        processIcon = '💾';
-        label = 'Saving note';
-      }
-      
+      const animClass = (data.status === 'running' && isLast && tc.ok) ? 'tool-active' : '';
+
       return `<div class="tool-call ${cls} ${animClass}">
-        <span class="process-icon">${processIcon}</span>
-        <span class="tool-label">${label}</span>
+        <span class="tool-label">${detailLabel}</span>
         <span class="status-icon">${statusIcon}</span>
       </div>`;
     }).join('');

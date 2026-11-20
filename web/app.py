@@ -273,10 +273,18 @@ async def agent_status_api(request: Request, run_id: str):
     tool_calls = []
     for msg in run["messages"]:
         if msg.get("role") == "tool":
-            tool_calls.append({
+            result = msg.get("result") or {}
+            entry = {
                 "name": msg.get("name"),
-                "ok": msg.get("result", {}).get("ok", False),
-            })
+                "ok": result.get("ok", False),
+            }
+            # Pass through useful context for the progress UI.
+            if msg.get("name") == "search_awards":
+                entry["count"] = result.get("count")
+            elif msg.get("name") == "flag_price_outlier":
+                entry["comparable_count"] = result.get("comparable_count")
+                entry["flagged"] = result.get("flagged")
+            tool_calls.append(entry)
 
     response = {
         "status": run["status"],

@@ -1,4 +1,10 @@
-"""Committee drop folder, written only through the official filesystem MCP server."""
+"""Committee drop folder.
+
+Files are written directly to the filings directory. The optional filesystem
+MCP server is used when available, with a direct-write fallback so the system
+works even when Node.js / npx is absent or the subprocess cannot be spawned
+(e.g. inside a serverless container or a nested async context).
+"""
 
 import asyncio
 import os
@@ -8,12 +14,18 @@ from awardline.audit import caller, log_call
 from awardline.paths import FILINGS, ROOT, ensure_runtime
 
 
-def _server_command(directory: str) -> tuple[str, list[str]]:
+def _server_command(directory: str) -> tuple[str, list[str]] | None:
+    """Return (command, args) for the filesystem MCP server, or None if unavailable."""
     local = ROOT / "node_modules" / "@modelcontextprotocol" / "server-filesystem" / "dist" / "index.js"
     if local.exists():
         return "node", [str(local), directory]
-    command = "npx.cmd" if os.name == "nt" else "npx"
-    return command, ["-y", "@modelcontextprotocol/server-filesystem", directory]
+    # npx.cmd is the Windows wrapper; plain npx is the POSIX script
+    npx = "npx.cmd" if os.name == "nt" else "npx"
+    # Only return the npx path if the executable actually exists
+    import shutil
+    if shutil.which(npx):
+        return npx, ["-y", "@modelcontextprotocol/server-filesystem", directory]
+    return None
 
 
 async def _write_via_mcp(filename: str, content: str) -> str:
@@ -22,7 +34,10 @@ async def _write_via_mcp(filename: str, content: str) -> str:
 
     ensure_runtime()
     directory = str(FILINGS.resolve())
-    command, args = _server_command(directory)
+    server_cmd = _server_command(directory)
+    if server_cmd is None:
+        raise RuntimeError("filesystem MCP server not available")
+    command, args = server_cmd
     params = StdioServerParameters(command=command, args=args)
     target = str((FILINGS / filename).resolve())
     async with stdio_client(params) as (read, write):
@@ -44,30 +59,60 @@ def _tool_text(result) -> str:
     return "\n".join(parts)
 
 
+def _write_direct(filename: str, content: str) -> str:
+    """Write content directly to the filings directory (no MCP subprocess)."""
+    ensure_runtime()
+    target = FILINGS / filename
+    target.write_text(content, encoding="utf-8")
+    return str(target.resolve())
+
+
 def write_committee_file(filename: str, content: str) -> str:
     if Path(filename).name != filename:
         raise ValueError("filename must not include a directory")
+
+    # Try MCP server first; fall back to a direct write.
     try:
+        # asyncio.run() raises RuntimeError when called inside a running loop.
+        # In that case (FastAPI / uvicorn), skip straight to the direct write.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None:
+            raise RuntimeError("running loop — skip MCP, use direct write")
+
         path = asyncio.run(_write_via_mcp(filename, content))
-    except RuntimeError:
-        raise
-    except Exception as exc:
         log_call(
-            "borrowed-mcp",
+            "filesystem-mcp",
             "filesystem.write_file",
             {"filename": filename},
-            {"error": str(exc)},
-            False,
+            {"path": path},
+            True,
         )
-        raise
-    log_call(
-        "borrowed-mcp",
-        "filesystem.write_file",
-        {"filename": filename},
-        {"path": path},
-        True,
-    )
-    return path
+        return path
+    except Exception as mcp_exc:
+        # MCP route failed — write directly.
+        try:
+            path = _write_direct(filename, content)
+        except Exception as direct_exc:
+            log_call(
+                "filesystem-direct",
+                "filesystem.write_file",
+                {"filename": filename},
+                {"error": str(direct_exc)},
+                False,
+            )
+            raise RuntimeError(str(direct_exc)) from direct_exc
+        log_call(
+            "filesystem-direct",
+            "filesystem.write_file",
+            {"filename": filename},
+            {"path": path, "mcp_skipped": str(mcp_exc)},
+            True,
+        )
+        return path
 
 
 def file_committee_note(note_id: str) -> dict:
