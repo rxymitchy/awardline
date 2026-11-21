@@ -593,28 +593,35 @@ async def filings_list(request: Request, refreshing: str = ""):
 
 @app.get("/filings/{note_id}/download")
 async def download_filing(request: Request, note_id: str):
-    """Serve a print-ready HTML page that triggers the browser's Save as PDF dialog."""
+    """Generate and serve a styled PDF of the committee note."""
     redirect = _require_officer(request)
     if redirect:
         return redirect
 
-    path = FILINGS / f"{note_id}.md"
-    if path.exists():
-        text = path.read_text(encoding="utf-8")
-    else:
-        draft = draft_for(note_id)
-        if draft is None:
-            from fastapi.responses import Response
-            return Response("Note not found.", status_code=404)
-        text = draft.get("text", "")
+    draft = draft_for(note_id)
+    if draft is None:
+        from fastapi.responses import Response
+        return Response("Note not found.", status_code=404)
 
     approval = approval_for(note_id)
 
-    return _t(request, "note_print.html", {
-        "note_id": note_id,
-        "text": text,
-        "approval": approval,
-    })
+    from awardline.pdf import build_pdf
+    from fastapi.responses import Response as FastResponse
+    try:
+        pdf_bytes = await asyncio.to_thread(build_pdf, draft, approval)
+    except Exception as exc:
+        return FastResponse(f"PDF generation failed: {exc}", status_code=500)
+
+    # Sanitise filename
+    buyer = (draft.get("finding") or {}).get("buyer", "note")
+    safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in buyer)[:40].strip()
+    filename = f"committee-note-{safe}-{note_id[:8]}.pdf".replace(" ", "-")
+
+    return FastResponse(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/filings/{note_id}", response_class=HTMLResponse)
