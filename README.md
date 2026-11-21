@@ -3,158 +3,128 @@
 Awardline prepares a value-for-money note for a Kenyan procuring entity. It compares a quote with published [Kenya PPIP](https://tenders.go.ke/ocds) awards, flags a price that is at least twice the median of similar awards, and drafts a committee note. A named officer approves the note before it is filed. The agent does not award a tender.
 
 **Two interfaces:**
-- **CLI**: Full agent demo — give it a task in natural language, watch it plan, call tools, retry on errors, and draft a note (2-3 minutes on Qwen 2.5 3B)
-- **Web UI**: Same agent, form-driven — officer fills buyer/item/amount, agent runs in background, results appear when ready
+- **CLI** — give it a task in natural language, watch it plan, call tools, retry on errors, and draft a note
+- **Web UI** — same agent, form-driven; officer fills buyer/item/amount, agent runs in background, results appear when ready
 
-Both use the same LangGraph agent. The web form just constructs the task string for the officer.
+Both use the same LangGraph agent. The web form constructs the task string for the agent.
 
-## Problem statement
+## How it works
 
-A Kenyan procuring entity's evaluation committee has to judge whether a quote is reasonable before it recommends an award. The practical check is what similar purchases cost last time. That history is on the Public Procurement Information Portal, which publishes thousands of award notices, but an officer still searches titles by hand and writes down the contracts they compared. A price several times a recent award can pass because nobody lined the figures up.
+The officer provides the buyer, the purchase description, the quoted amount, and optionally the quoting supplier. The agent searches Kenya PPIP awards from the 2025/2026 and 2026/2027 release files. It keeps awards in the same currency whose titles share at least two content words with the quote, where those shared words carry at least half of the description's weight. Rare words count more than common ones, so a fuel quote is not compared with tyre contracts just because both mention "motor vehicles."
 
-**Current cost to user:** ~1,050 KES (1h 45min officer time) per evaluation  
-**With Awardline:** ~72 KES (10min) per evaluation  
-**Value created:** 978 KES saved + transparent, auditable price comparisons
+When at least four comparable awards exist, it compares the quote with their median. A quote at least twice that median is flagged. Each source is listed with its OCID, buyer, title, supplier, amount, date, source file, and the words that matched. When a supplier is named, the note also shows that firm's past PPIP awards, merging name variants like `Ltd` and `Limited`. The agent then drafts a committee note from that flag. It cannot invent an OCID or an amount — all citations come from the saved flag file, not from model output.
 
-See [COST_MODEL.md](COST_MODEL.md) for full unit economics and scalability analysis.
-
-## Solution overview
-
-The officer gives the buyer, the purchase, the quoted amount, and, if known, the quoting supplier. The agent searches 4,956 Kenya PPIP awards from the 2025/2026 and 2026/2027 release files. It keeps awards in the same currency whose titles share at least two content words with the quote, where those shared words carry at least half of the description's weight. Rare words count for more than common ones, so a fuel quote is not compared with tyre contracts just because both say "motor vehicles". When at least four comparable awards exist, it compares the quote with their median. A quote at least twice that median is flagged. Each source is listed with its OCID, buyer, title, supplier, amount, date, the PPIP file it came from, and the words that matched. If the history is too thin, no flag is raised. When a supplier is named, the note also lists that firm's past PPIP awards, merging spellings such as `Ltd` and `Limited` and showing every name it merged. The agent then drafts a committee note from that flag. It cannot invent an OCID or an amount.
-
-## Target users
-
-Procurement officers and evaluation committees at Kenyan procuring entities that already publish on PPIP. The committee still decides. The public benefits when a high quote is questioned with cited awards.
+Each officer's notes are independent: two officers checking the same quote each get their own draft, approval, and filing.
 
 ## Architecture
 
-One local agent sits in front of two MCP servers. Qwen 2.5 3B, through Ollama on the same machine, chooses each tool. The Awardline MCP server reads the PPIP snapshot and writes the flag and the draft. After a named officer approves, `file_committee_note` calls the official filesystem MCP server, which writes the note into `filings/`. Procurement records stay on the machine. A diagram of this path is in `docs/architecture.png`. See also `ARCHITECTURE.md`.
-
 | Path | Role |
-| --- | --- |
-| `awardline/server.py` | Our MCP server |
-| `awardline/agent.py` | LangGraph loop over Qwen 2.5 |
-| `awardline/drop.py` | Filing, via `@modelcontextprotocol/server-filesystem` |
-| `awardline/score.py` | Comparable awards, median, and supplier history |
+|---|---|
+| `awardline/server.py` | Awardline MCP server |
+| `awardline/agent.py` | LangGraph loop |
+| `awardline/drop.py` | Filing to committee folder |
+| `awardline/score.py` | Comparable awards, median, supplier history |
 | `awardline/snapshot.py` | Downloads PPIP packages and builds the snapshot |
-| `web/app.py` | FastAPI web UI — runs the same agent |
-| `web/templates/` | Jinja2 templates for login, form, progress, results |
-| `data/awards.json` | PPIP awards used by the tools |
-| `logs/tool_calls.jsonl` | Every tool call, approval, and file write |
+| `web/app.py` | FastAPI web UI |
+| `web/templates/` | Jinja2 templates |
+| `data/awards.json` | PPIP awards snapshot |
+| `runtime/logs/tool_calls.jsonl` | Every tool call, approval, and file write |
 | `ARCHITECTURE.md` | How the pieces connect |
 | `EVALS.md` | Evaluation tasks and results |
 
-## Setup/installation instructions
+One local agent sits in front of two MCP servers. The agent (via Ollama or Groq) chooses each tool. The Awardline MCP server reads the PPIP snapshot and writes flags and drafts. After a named officer approves, `file_committee_note` writes the note into `runtime/filings/`. See `ARCHITECTURE.md` for a full diagram.
 
-From this directory, after [Ollama](https://ollama.com) is installed and `ollama pull qwen2.5:3b` has finished:
+## Setup
 
-```powershell
-npm install; python -m venv .venv; .\.venv\Scripts\python -m pip install -r requirements.txt; .\.venv\Scripts\python -m awardline demo
-```
-
-`npm install` fetches `@modelcontextprotocol/server-filesystem`. The Python packages are `mcp`, `langgraph`, `httpx`, `pydantic`, and `pytest`.
-
-## Usage instructions
-
-### CLI agent demo
-
-The demo picks a real purchase that has at least four comparable awards, asks Qwen 2.5 3B to check a quote at four times the median, and prints the note. It does not file the note.
-
-To file it, an officer has to be named:
+Requires [Ollama](https://ollama.com) with `qwen2.5:3b` pulled, or a Groq API key.
 
 ```powershell
-.\.venv\Scripts\python -m awardline demo --approve --officer "Amina Yusuf"
+npm install
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -r requirements.txt
 ```
+
+`npm install` fetches `@modelcontextprotocol/server-filesystem`. Python dependencies are `mcp`, `langgraph`, `httpx`, `pydantic`, and `pytest`.
+
+**To use Groq instead of Ollama**, copy `.env.example` to `.env` and add your `GROQ_API_KEY`.
+
+## Usage
 
 ### Web UI
-
-Start the web server:
 
 ```powershell
 .\start_web.ps1
 ```
 
-Then open http://localhost:8000 in your browser.
+Open [http://localhost:8000](http://localhost:8000).
 
-1. **Sign in** with your name (e.g. "Amina Yusuf")
-2. **Check a quote** — fill the form with buyer, item, amount, and supplier
-3. **Agent works** — watch tool calls appear as the agent searches PPIP, flags outliers, and drafts the note (2-3 minutes)
-4. **Review results** — see the verdict, numbered sources with OCIDs, median, ratio, and committee note
-5. **Approve & File** — one button to approve and file to the committee folder
+1. Sign in with your name
+2. Fill the form — buyer, item, amount, and optionally the supplier
+3. Watch the agent work — tool calls appear as it searches PPIP, compares prices, and drafts the note
+4. Review the verdict, sources, and committee note
+5. Click **Approve & File** to record your approval and file the note
 
-**Privacy:** Each officer only sees notes they approved. Notes filed by other officers are not visible to you.
+Each officer only sees notes they approved. Notes filed by other officers are not visible.
 
----
+### CLI
 
-**Original CLI usage below:**
+```powershell
+.\.venv\Scripts\python -m awardline demo
+```
+
+To file the note, approve it with a named officer:
+
+```powershell
+.\.venv\Scripts\python -m awardline demo --approve --officer "Amina Yusuf"
 ```
 
 Approve and file an existing note separately:
 
 ```powershell
-.\.venv\Scripts\python -m awardline approve --note-id note-505b1626d7 --officer "Amina Yusuf"
-.\.venv\Scripts\python -m awardline file --note-id note-505b1626d7
+.\.venv\Scripts\python -m awardline approve --note-id <note_id> --officer "Amina Yusuf"
+.\.venv\Scripts\python -m awardline file --note-id <note_id>
 ```
 
-Other commands: `python -m awardline serve` starts the Awardline MCP server on stdio, `python -m awardline eval` runs the evaluation tasks, and `python -m awardline refresh` downloads the current PPIP release packages and rebuilds `data/awards.json`. A failed download leaves the last good snapshot in place. Each note states how many awards the snapshot holds and when it was downloaded.
+Other commands:
+- `python -m awardline serve` — start the Awardline MCP server on stdio
+- `python -m awardline eval` — run evaluation tasks
+- `python -m awardline refresh` — download the current PPIP release packages and rebuild `data/awards.json`
 
-## Technology stack
+## MCP tools
 
-Python, the MCP Python SDK, LangGraph, httpx, Pydantic, and pytest. Node.js runs `@modelcontextprotocol/server-filesystem`. The model is Qwen 2.5 3B through Ollama's local chat API. Awards, flags, drafts, and approvals are JSON files. There is no database server and no hosted model.
-
-## Agent architecture
-
-Awardline is a single agent. Working memory is the message list LangGraph keeps for the current quote. `plan` asks Qwen for the next action. `tools` sends that call to the Awardline MCP server over stdio and appends the result, including errors. The loop returns to `plan` until the model stops or eight steps pass. An unknown tool name, an empty search, a quoted amount that does not match the request, and a supplier that the request names but the call leaves out or changes all come back so the model can try again. A different spelling of the same supplier is accepted. A rejected call comes back with `retry_with`, the exact corrected call, so a small model can copy it. If the model stops with an empty reply after using tools but before a draft exists, the graph reminds it to continue, at most twice. The model is told to stop when the draft exists.
-
-Qwen 2.5 3B runs on CPU with a 4,096-token context. The model sees a short summary of each tool result: the note ID, whether the quote was flagged, the median, the ratio, and how many comparables and past supplier awards were found. The full result, with every source, stays in the graph state and the log, and the note is built from the saved flag, so nothing the committee reads passes through the model.
-
-## MCP implementation
-
-Both servers speak stdio. The LangGraph tools node is the MCP client: it starts `python -m awardline.server`, opens a client session, and calls the tool Qwen named. The result goes back to Qwen. Filing is a second hop. `file_committee_note` checks the approval file, then calls the filesystem server's `write_file` tool with an absolute path inside `filings/`. Awardline runs the copy in `node_modules` when `npm install` has put it there. Calls made through the Awardline server are logged with `"actor": "mcp"`. Neither server publishes MCP resources. These are tools only.
-
-## MCP tools/servers
-
-Awardline's own server exposes four tools:
+Awardline exposes four tools:
 
 | Tool | Effect |
-| --- | --- |
+|---|---|
 | `search_awards` | Reads the PPIP snapshot |
 | `flag_price_outlier` | Writes a sourced flag under `runtime/flags/` |
-| `draft_committee_note` | Writes a draft whose citations are copied from that flag |
-| `file_committee_note` | Files the note, or refuses |
+| `draft_committee_note` | Writes a draft whose citations are copied from the flag |
+| `file_committee_note` | Files the note, or refuses until an officer has approved it |
 
-`flag_price_outlier` and `draft_committee_note` take an optional `supplier`. `draft_committee_note` refuses when no flag exists for the same buyer, description, amount, and supplier. A flag needs at least four awards in the same currency that share two content words with the quote, carrying at least half of the description's word weight. The quote is flagged when it is at least twice their median.
+`flag_price_outlier` and `draft_committee_note` accept optional `supplier` and `officer` parameters. `draft_committee_note` refuses when no flag exists for the same buyer, description, amount, supplier, and officer. The official `@modelcontextprotocol/server-filesystem` server handles the actual file write to `runtime/filings/`; Awardline falls back to a direct write if the MCP subprocess cannot be spawned.
 
-The server we did not write is `@modelcontextprotocol/server-filesystem`. It can see only `filings/`. We use it because the directory allow-list is already its job.
-
-## Human-in-the-loop workflow
+## Human-in-the-loop
 
 1. The officer states the quote.
 2. The agent searches, flags, and drafts. It does not award the tender.
-3. Filing is refused until `runtime/approvals/<note_id>.json` contains `decision: approve`, a human officer's name, and the revision of the current draft. Each draft gets a new revision, so an approval does not carry over when the agent drafts the same quote again.
-4. The officer runs `python -m awardline approve --note-id <id> --officer "<name>"`. That command is not a tool the model can call. Names shorter than 3 characters, and the names `agent`, `awardline`, and `model`, are rejected. The log line has `"actor": "human"`.
-5. `python -m awardline file --note-id <id>` calls the filesystem MCP server, which writes `filings/<note_id>.md`.
+3. Filing is refused until `runtime/approvals/<note_id>.json` contains `decision: approve`, the officer's name, and the revision of the current draft. Each draft gets a new revision, so an older approval does not carry forward.
+4. The officer approves through the web UI or the CLI `approve` command. Names shorter than 3 characters, and the reserved names `agent`, `awardline`, and `model`, are rejected. The log records `"actor": "human"`.
+5. `file_committee_note` writes `runtime/filings/<note_id>.md`.
 
-## Security considerations
+## Technology stack
 
-**Authentication:** The current web UI uses a simple name-based login for demo purposes. For production deployment, integrate organizational SSO (Single Sign-On) such as:
-- **Azure AD/Entra ID** for Microsoft-based organizations
-- **Google Workspace** for Google-based organizations  
-- **Okta** or **Auth0** for enterprise identity management
-
-SSO provides centralized user management, audit trails, and eliminates the need for separate credentials.
+Python, MCP Python SDK, LangGraph, httpx, Pydantic, pytest. Node.js runs `@modelcontextprotocol/server-filesystem`. The model is Qwen 2.5 3B through Ollama, or any Groq-hosted model via `GROQ_API_KEY`. Awards, flags, drafts, and approvals are JSON files. No database server. No hosted model required.
 
 ## Limitations
 
-- Award amounts have no unit. The 2025/2026 and 2026/2027 PPIP packages contain no line items, quantities, or units, so the median compares contract totals. Every note says so, and lists the words that matched each source so the committee can drop one that is a different size of purchase.
-- There is no budget or unpaid-invoice check. Those packages contain no budgets and no payments.
-- Title matching is better but not perfect. Weighting words by rarity keeps a fuel quote away from tyre contracts, but two titles can still share rare words and describe different purchases. Every note states that a past award may itself have been overpriced.
-- Supplier matching ignores only case, punctuation, a leading `M/S`, a trailing postal address, and `Ltd`, `Limited`, `Co`, `Company`, and `PLC`. It does not merge `(K)` or `Kenya` variants, or abbreviations such as `Intl`, because those can be different firms. Supplier history is shown for context. It never raises or removes a price flag.
-- The snapshot only changes when someone runs `python -m awardline refresh`. A run does not call the PPIP portal.
-- A small model can drop a zero on the quoted amount or leave out the supplier. The graph rejects that call and asks for the amount or supplier in the request.
+- **No unit prices.** PPIP awards show contract totals only, not quantities or units. The median compares total contract values. Every note says so and lists the words that matched each source.
+- **No budget or payment data.** PPIP packages contain neither budgets nor payment records.
+- **Title matching is approximate.** Two titles can share rare words while describing different purchases. Every note states that a past award may itself have been overpriced.
+- **Supplier matching is fuzzy but not universal.** Case, punctuation, a leading `M/S`, trailing postal addresses, and `Ltd/Limited/Co/Company/PLC` are ignored. Variants like `(K)` or `Intl` are not merged because they can be different firms.
+- **Snapshot is static.** It only updates when someone runs `python -m awardline refresh`.
 
-## Future improvements
+## Future work
 
-- If PPIP starts publishing quantities and units, compare unit prices instead of contract totals.
-- Use a supplier's KRA PIN as the matching key if PPIP starts publishing it, instead of the name.
-- Let the officer exclude a source from the note and record who excluded it and why.
+- Compare unit prices if PPIP adds quantities and units.
+- Use KRA PIN as the supplier matching key if PPIP publishes it.
+- Let officers exclude a source from a note and record the reason.
