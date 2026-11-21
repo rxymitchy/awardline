@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Committee Note {{ note_id[:8] }} · Awardline</title>
+  <style>
+    /* ── Base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Georgia", "Times New Roman", serif;
+      font-size: 11pt;
+      line-height: 1.65;
+      color: #1a1a1a;
+      background: #fff;
+      padding: 0;
+    }
+
+    a { color: #1a4a9e; }
+
+    /* ── Page layout ── */
+    .page {
+      max-width: 740px;
+      margin: 0 auto;
+      padding: 48px 56px;
+    }
+
+    /* ── Print button (hidden when printing) ── */
+    .print-bar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      background: #1a56db;
+      color: #fff;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: -apple-system, sans-serif;
+      font-size: 14px;
+      z-index: 999;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .print-bar .hint { opacity: 0.85; font-size: 13px; }
+    .print-btn {
+      background: #fff;
+      color: #1a56db;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 20px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: -apple-system, sans-serif;
+    }
+    .print-btn:hover { background: #e0eaff; }
+    .back-link {
+      color: rgba(255,255,255,0.8);
+      text-decoration: none;
+      font-family: -apple-system, sans-serif;
+      font-size: 13px;
+    }
+    .back-link:hover { color: #fff; }
+
+    /* Push content below the fixed bar on screen */
+    @media screen {
+      body { padding-top: 56px; }
+    }
+
+    /* ── Header block ── */
+    .doc-header {
+      border-bottom: 3px solid #1a56db;
+      padding-bottom: 18px;
+      margin-bottom: 24px;
+    }
+    .doc-org {
+      font-size: 10pt;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #555;
+      margin-bottom: 6px;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+    .doc-title {
+      font-size: 20pt;
+      font-weight: 700;
+      color: #1a1a1a;
+      letter-spacing: 0.01em;
+      line-height: 1.2;
+      margin-bottom: 10px;
+    }
+    .doc-meta {
+      font-size: 9.5pt;
+      color: #555;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .doc-meta span { display: flex; gap: 4px; }
+    .doc-meta .label { font-weight: 600; color: #333; }
+    .doc-meta .mono { font-family: "Courier New", monospace; }
+
+    /* ── Verdict banner ── */
+    .verdict {
+      border-radius: 6px;
+      padding: 14px 18px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      border-left: 5px solid;
+    }
+    .verdict-flag { background: #fff5f5; border-color: #c81e1e; }
+    .verdict-ok   { background: #f0fdf4; border-color: #065f46; }
+    .verdict-warn { background: #fffbeb; border-color: #92400e; }
+    .verdict-icon { font-size: 20pt; line-height: 1; flex-shrink: 0; }
+    .verdict-text { }
+    .verdict-heading {
+      font-size: 12pt;
+      font-weight: 700;
+      margin-bottom: 2px;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+    .verdict-flag  .verdict-heading { color: #991b1b; }
+    .verdict-ok    .verdict-heading { color: #065f46; }
+    .verdict-warn  .verdict-heading { color: #92400e; }
+    .verdict-detail {
+      font-size: 10.5pt;
+      color: #333;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+
+    /* ── Section headings ── */
+    .section-heading {
+      font-size: 8.5pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: #666;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 5px;
+      margin: 28px 0 14px;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+
+    /* ── Quote details table ── */
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10.5pt;
+      margin-bottom: 8px;
+    }
+    .detail-table td {
+      padding: 5px 10px 5px 0;
+      vertical-align: top;
+    }
+    .detail-table td:first-child {
+      width: 160px;
+      color: #555;
+      font-weight: 600;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      white-space: nowrap;
+    }
+
+    /* ── Source contracts ── */
+    .source-block {
+      border: 1px solid #e0e0e0;
+      border-radius: 5px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      background: #fafafa;
+    }
+    .source-block.same-supplier {
+      border-color: #fdba74;
+      background: #fff7ed;
+    }
+    .source-ocid {
+      font-family: "Courier New", monospace;
+      font-size: 9.5pt;
+      font-weight: 700;
+      color: #1a4a9e;
+      margin-bottom: 6px;
+    }
+    .source-grid {
+      display: grid;
+      grid-template-columns: 80px 1fr 80px 1fr;
+      gap: 3px 12px;
+      font-size: 9.5pt;
+    }
+    .source-grid .k {
+      color: #666;
+      font-weight: 600;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+    .source-grid .v { color: #1a1a1a; word-break: break-word; }
+
+    /* ── Recommendation box ── */
+    .recommendation {
+      background: #fffbeb;
+      border-left: 4px solid #f59e0b;
+      padding: 10px 14px;
+      margin: 12px 0;
+      border-radius: 0 5px 5px 0;
+      font-size: 10.5pt;
+      color: #78350f;
+      font-style: italic;
+    }
+
+    /* ── Caveats ── */
+    .caveat {
+      font-size: 9.5pt;
+      color: #555;
+      margin-bottom: 8px;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+    .caveat strong { color: #333; }
+
+    /* ── Signature block ── */
+    .signature-block {
+      margin-top: 36px;
+      border-top: 1px solid #ccc;
+      padding-top: 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      font-size: 10pt;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+    }
+    .sig-label {
+      font-size: 8.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 28px;
+    }
+    .sig-line {
+      border-bottom: 1px solid #333;
+      margin-bottom: 6px;
+    }
+    .sig-name { font-weight: 600; }
+    .sig-date { color: #555; font-size: 9.5pt; }
+
+    /* ── Footer ── */
+    .doc-footer {
+      margin-top: 32px;
+      padding-top: 12px;
+      border-top: 1px solid #e0e0e0;
+      font-size: 8.5pt;
+      color: #888;
+      font-family: -apple-system, "Segoe UI", sans-serif;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* ── Plain body text ── */
+    .body-text { font-size: 10.5pt; margin-bottom: 4px; }
+
+    /* ── Print media ── */
+    @media print {
+      .print-bar { display: none !important; }
+      body { padding-top: 0; }
+      .page { padding: 20mm 20mm; max-width: 100%; }
+      .source-block { break-inside: avoid; }
+      .signature-block { break-inside: avoid; }
+      a { color: #1a1a1a; text-decoration: none; }
+    }
+
+    @page {
+      size: A4;
+      margin: 18mm 18mm 22mm;
+    }
+  </style>
+</head>
+<body>
+
+  {# ── Print bar (screen only) ── #}
+  <div class="print-bar">
+    <a href="/filings/{{ note_id }}" class="back-link">← Back to note</a>
+    <span class="hint">Click "Save as PDF" in the print dialog</span>
+    <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
+  </div>
+
+  {# ── Parse lines from text ── #}
+  {% set lines = text.split('\n') %}
+
+  {# Detect verdict, buyer, item, amount, supplier, officer, date, snapshot #}
+  {% set ns = namespace(
+    verdict='',
+    verdict_detail='',
+    buyer='',
+    item='',
+    amount='',
+    supplier='',
+    officer='',
+    generated='',
+    snapshot='',
+    in_summary=false,
+    in_sources=false,
+    in_caveats=false,
+    in_supplier_history=false,
+    in_data=false,
+    sources=[],
+    cur_source=none,
+    caveats=[],
+    cur_caveat_title='',
+    cur_caveat_body=''
+  ) %}
+
+  {% for line in lines %}
+    {% if line.startswith('Generated:') %}{% set ns.generated = line[10:].strip() %}{% endif %}
+    {% if line.startswith('Procuring Entity:') %}{% set ns.buyer = line[17:].strip() %}{% endif %}
+    {% if line.startswith('Purchase Description:') %}{% set ns.item = line[21:].strip() %}{% endif %}
+    {% if line.startswith('Quoted Amount:') %}{% set ns.amount = line[14:].strip() %}{% endif %}
+    {% if line.startswith('Quoting Supplier:') %}{% set ns.supplier = line[17:].strip() %}{% endif %}
+    {% if line.startswith('Approved by:') %}{% set ns.officer = line[12:].strip() %}{% endif %}
+    {% if line.startswith('Snapshot:') %}{% set ns.snapshot = line[9:].strip() %}{% endif %}
+    {% if 'PRICE FLAG RAISED' in line and not ns.verdict %}{% set ns.verdict = 'flag' %}{% endif %}
+    {% if 'NO PRICE FLAG' in line and not ns.verdict %}{% set ns.verdict = 'ok' %}{% endif %}
+    {% if 'INSUFFICIENT DATA' in line and not ns.verdict %}{% set ns.verdict = 'warn' %}{% endif %}
+  {% endfor %}
+
+  <div class="page">
+
+    {# ── Document header ── #}
+    <div class="doc-header">
+      <div class="doc-org">Kenya Public Procurement · Value-for-Money Committee Note</div>
+      <div class="doc-title">{{ ns.item or 'Committee Note' }}</div>
+      <div class="doc-meta">
+        <span><span class="label">Buyer</span> {{ ns.buyer or '—' }}</span>
+        {% if ns.supplier %}<span><span class="label">Supplier</span> {{ ns.supplier }}</span>{% endif %}
+        <span><span class="label">Amount</span> {{ ns.amount or '—' }}</span>
+        <span><span class="label">Note ID</span> <span class="mono">{{ note_id }}</span></span>
+        {% if ns.generated %}<span><span class="label">Generated</span> {{ ns.generated }}</span>{% endif %}
+      </div>
+    </div>
+
+    {# ── Verdict banner ── #}
+    {% if ns.verdict == 'flag' %}
+    <div class="verdict verdict-flag">
+      <div class="verdict-icon">🚩</div>
+      <div class="verdict-text">
+        <div class="verdict-heading">Price Flag Raised</div>
+        <div class="verdict-detail">The quoted amount is at least twice the median of comparable past contracts. The committee should request justification or seek alternative quotes before award.</div>
+      </div>
+    </div>
+    {% elif ns.verdict == 'ok' %}
+    <div class="verdict verdict-ok">
+      <div class="verdict-icon">✅</div>
+      <div class="verdict-text">
+        <div class="verdict-heading">No Price Flag</div>
+        <div class="verdict-detail">The quoted amount is within the reasonable range of comparable past contracts.</div>
+      </div>
+    </div>
+    {% elif ns.verdict == 'warn' %}
+    <div class="verdict verdict-warn">
+      <div class="verdict-icon">⚠️</div>
+      <div class="verdict-text">
+        <div class="verdict-heading">Insufficient Data</div>
+        <div class="verdict-detail">Not enough comparable contracts were found to calculate a reliable median. Standard due diligence applies.</div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Render body sections from the note text ── #}
+    {% set ns2 = namespace(section='', rec='', in_source=false, source_lines=[], normal_lines=[]) %}
+
+    {% for line in lines %}
+      {# Detect section transitions #}
+      {% if line in ['EXECUTIVE SUMMARY','QUOTE DETAILS','COMPARABLE PPIP AWARDS','SUPPLIER HISTORY','DATA SOURCE','IMPORTANT CAVEATS'] or line.startswith('SUPPLIER HISTORY:') %}
+        {# Close any open source #}
+        {% if ns2.in_source and ns2.source_lines %}
+          <div class="source-block">
+          {% for sl in ns2.source_lines %}{{ sl }}{% endfor %}
+          </div>
+          {% set ns2.in_source = false %}
+          {% set ns2.source_lines = [] %}
+        {% endif %}
+        {% set ns2.section = line %}
+        {% if line not in ['EXECUTIVE SUMMARY'] %}
+          <div class="section-heading">{{ line }}</div>
+        {% endif %}
+
+      {# Skip dividers and already-rendered header lines #}
+      {% elif '=' * 20 in line or '-' * 20 in line %}
+        {# skip #}
+      {% elif line.startswith('COMMITTEE VALUE-FOR-MONEY NOTE') or line.startswith('Note ID:') or line.startswith('Generated:') %}
+        {# skip — shown in header #}
+      {% elif line.startswith('PRICE FLAG RAISED') or line.startswith('NO PRICE FLAG') or line.startswith('INSUFFICIENT DATA') %}
+        {# skip — shown in verdict banner #}
+      {% elif line.startswith('Procuring Entity:') or line.startswith('Purchase Description:') or line.startswith('Quoted Amount:') or line.startswith('Quoting Supplier:') %}
+        {# skip — shown in header #}
+
+      {# Recommendation line #}
+      {% elif line.startswith('Recommendation:') %}
+        <div class="recommendation">{{ line[15:].strip() }}</div>
+
+      {# Approved by / Status lines — handled in signature block #}
+      {% elif line.startswith('Approved by:') or line.startswith('Status:') %}
+        {# skip — shown in signature block #}
+
+      {# Source contract blocks: [N] OCID #}
+      {% elif line.startswith('[') and '] ' in line and (line[1:].split(']')[0]).strip().isdigit() %}
+        {% if ns2.in_source and ns2.source_lines %}
+          <div class="source-block">
+          {% for sl in ns2.source_lines %}{{ sl }}{% endfor %}
+          </div>
+          {% set ns2.source_lines = [] %}
+        {% endif %}
+        {% set ns2.in_source = true %}
+        {% set ns2.source_lines = ['<div class="source-ocid">' ~ line ~ '</div><div class="source-grid">'] %}
+
+      {# Indented source field lines #}
+      {% elif ns2.in_source and line.startswith('    ') and ':' in line %}
+        {% set parts = line.strip().split(':', 1) %}
+        {% set ns2.source_lines = ns2.source_lines + ['<span class="k">' ~ parts[0] ~ '</span><span class="v">' ~ (parts[1].strip() if parts|length > 1 else '') ~ '</span>'] %}
+
+      {# End of indented block while in source #}
+      {% elif ns2.in_source and line.strip() == '' %}
+        {% set ns2.source_lines = ns2.source_lines + ['</div>'] %}
+        <div class="source-block">
+        {% for sl in ns2.source_lines %}{{ sl }}{% endfor %}
+        </div>
+        {% set ns2.in_source = false %}
+        {% set ns2.source_lines = [] %}
+
+      {# Snapshot line #}
+      {% elif line.startswith('Snapshot:') or line.startswith('Downloaded:') %}
+        <p class="caveat"><strong>Data:</strong> {{ line }}</p>
+
+      {# Caveat headings (lines ending with :) in IMPORTANT CAVEATS section #}
+      {% elif ns2.section == 'IMPORTANT CAVEATS' and line.endswith(':') and not line.startswith(' ') and line.strip() %}
+        <p class="caveat"><strong>{{ line[:-1] }}</strong></p>
+
+      {# Indented caveat body #}
+      {% elif ns2.section == 'IMPORTANT CAVEATS' and line.startswith('  ') %}
+        <p class="caveat" style="padding-left:14px;">{{ line.strip() }}</p>
+
+      {# Skip blank lines #}
+      {% elif line.strip() == '' %}
+        {# spacer — skip #}
+
+      {# Everything else #}
+      {% else %}
+        <p class="body-text">{{ line }}</p>
+      {% endif %}
+    {% endfor %}
+
+    {# Close any dangling source block #}
+    {% if ns2.in_source and ns2.source_lines %}
+      {% set ns2.source_lines = ns2.source_lines + ['</div>'] %}
+      <div class="source-block">
+      {% for sl in ns2.source_lines %}{{ sl }}{% endfor %}
+      </div>
+    {% endif %}
+
+    {# ── Signature block ── #}
+    <div class="signature-block">
+      <div>
+        <div class="sig-label">Approving Officer</div>
+        <div class="sig-line"></div>
+        <div class="sig-name">{{ ns.officer or approval.officer if approval else '________________________' }}</div>
+        {% if approval %}<div class="sig-date">{{ approval.approved_at[:10] }}</div>{% endif %}
+      </div>
+      <div>
+        <div class="sig-label">Committee Chairperson</div>
+        <div class="sig-line"></div>
+        <div class="sig-name">________________________</div>
+        <div class="sig-date">Date: _______________</div>
+      </div>
+    </div>
+
+    {# ── Footer ── #}
+    <div class="doc-footer">
+      <span>Awardline · Kenya PPIP Value-for-Money Tool</span>
+      {% if ns.snapshot %}<span>Data: {{ ns.snapshot }}</span>{% endif %}
+      <span>Note {{ note_id }}</span>
+    </div>
+
+  </div>{# /page #}
+
+  <script>
+    // Auto-open print dialog after a short delay so the page renders first
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 600);
+    });
+  </script>
+
+</body>
+</html>

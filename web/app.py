@@ -593,28 +593,28 @@ async def filings_list(request: Request, refreshing: str = ""):
 
 @app.get("/filings/{note_id}/download")
 async def download_filing(request: Request, note_id: str):
-    """Download a filed note as a .md file."""
+    """Serve a print-ready HTML page that triggers the browser's Save as PDF dialog."""
     redirect = _require_officer(request)
     if redirect:
         return redirect
 
     path = FILINGS / f"{note_id}.md"
     if path.exists():
-        content = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     else:
-        # Fall back to the draft text if .md not yet written
         draft = draft_for(note_id)
         if draft is None:
             from fastapi.responses import Response
             return Response("Note not found.", status_code=404)
-        content = draft.get("text", "")
+        text = draft.get("text", "")
 
-    from fastapi.responses import Response
-    return Response(
-        content=content.encode("utf-8"),
-        media_type="text/markdown",
-        headers={"Content-Disposition": f'attachment; filename="{note_id}.md"'},
-    )
+    approval = approval_for(note_id)
+
+    return _t(request, "note_print.html", {
+        "note_id": note_id,
+        "text": text,
+        "approval": approval,
+    })
 
 
 @app.get("/filings/{note_id}", response_class=HTMLResponse)
