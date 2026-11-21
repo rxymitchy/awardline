@@ -452,21 +452,59 @@ async def file_note(request: Request, note_id: str):
     return RedirectResponse("/filings", status_code=303)
 
 
+@app.post("/refresh", response_class=HTMLResponse)
+async def refresh_snapshot(request: Request):
+    """Trigger a PPIP snapshot refresh in the background."""
+    redirect = _require_officer(request)
+    if redirect:
+        return redirect
+
+    async def _run_refresh():
+        from awardline.snapshot import refresh
+        try:
+            result = await asyncio.to_thread(refresh)
+            app.state.last_refresh = result
+        except Exception as exc:
+            app.state.last_refresh = {"ok": False, "error": str(exc)}
+
+    asyncio.create_task(_run_refresh())
+    return RedirectResponse("/filings?refreshing=1", status_code=303)
+
+
+@app.get("/api/refresh/status")
+async def refresh_status(request: Request):
+    result = getattr(app.state, "last_refresh", None)
+    if result is None:
+        return JSONResponse({"status": "idle"})
+    if result.get("ok"):
+        return JSONResponse({
+            "status": "done",
+            "award_count": result.get("award_count"),
+            "retrieved_at": (result.get("retrieved_at") or "")[:10],
+        })
+    return JSONResponse({"status": "error", "error": result.get("error")})
+
+
 @app.get("/filings", response_class=HTMLResponse)
-async def filings_list(request: Request):
+async def filings_list(request: Request, refreshing: str = ""):
     redirect = _require_officer(request)
     if redirect:
         return redirect
 
     officer = _officer(request)
     ensure_runtime()
+
+    # Collect every note that has been filed (has a .md file) OR approved.
+    # This ensures notes are never lost regardless of who filed them or whether
+    # the .md file was written.
+    seen = set()
     filed = []
+
+    # 1. Filed notes — have a .md file on disk
     for path in sorted(FILINGS.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
         note_id = path.stem
+        seen.add(note_id)
         approval = approval_for(note_id)
-        # Only show notes this officer approved
-        if not approval or approval.get("officer") != officer:
-            continue
         draft = draft_for(note_id)
         filed.append({
             "note_id": note_id,
@@ -476,9 +514,67 @@ async def filings_list(request: Request):
             "item": draft.get("finding", {}).get("query", "—") if draft else "—",
             "amount": draft.get("finding", {}).get("amount") if draft else None,
             "flagged": draft.get("finding", {}).get("flagged") if draft else None,
+            "is_mine": (approval.get("officer") == officer) if approval else False,
+            "status": "filed",
         })
 
-    return _t(request, "filings.html", {"officer": officer, "filed": filed})
+    # 2. Approved but not yet filed — approval exists, no .md yet
+    from awardline.paths import APPROVALS
+    for path in sorted(APPROVALS.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        note_id = path.stem
+        if note_id in seen:
+            continue
+        seen.add(note_id)
+        approval = approval_for(note_id)
+        draft = draft_for(note_id)
+        if approval and approval.get("decision") == "approve":
+            filed.append({
+                "note_id": note_id,
+                "officer": approval["officer"],
+                "approved_at": (approval.get("approved_at") or "")[:10],
+                "buyer": draft.get("finding", {}).get("buyer", "—") if draft else "—",
+                "item": draft.get("finding", {}).get("query", "—") if draft else "—",
+                "amount": draft.get("finding", {}).get("amount") if draft else None,
+                "flagged": draft.get("finding", {}).get("flagged") if draft else None,
+                "is_mine": approval.get("officer") == officer,
+                "status": "approved",
+            })
+
+    # Sort: filed first, then approved; newest first within each group
+    filed.sort(key=lambda x: (0 if x["status"] == "filed" else 1, x["approved_at"]), reverse=False)
+    filed.sort(key=lambda x: x["approved_at"], reverse=True)
+
+    return _t(request, "filings.html", {
+        "officer": officer,
+        "filed": filed,
+        "refreshing": bool(refreshing),
+    })
+
+
+@app.get("/filings/{note_id}/download")
+async def download_filing(request: Request, note_id: str):
+    """Download a filed note as a .md file."""
+    redirect = _require_officer(request)
+    if redirect:
+        return redirect
+
+    path = FILINGS / f"{note_id}.md"
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+    else:
+        # Fall back to the draft text if .md not yet written
+        draft = draft_for(note_id)
+        if draft is None:
+            from fastapi.responses import Response
+            return Response("Note not found.", status_code=404)
+        content = draft.get("text", "")
+
+    from fastapi.responses import Response
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{note_id}.md"'},
+    )
 
 
 @app.get("/filings/{note_id}", response_class=HTMLResponse)
@@ -488,11 +584,17 @@ async def view_filing(request: Request, note_id: str):
         return redirect
 
     path = FILINGS / f"{note_id}.md"
-    if not path.exists():
-        return _t(request, "error.html", {"officer": _officer(request), "message": "Filing not found."}, 404)
-
-    text = path.read_text(encoding="utf-8")
     approval = approval_for(note_id)
+
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+    else:
+        # Note approved but .md not written yet — render from draft
+        draft = draft_for(note_id)
+        if draft is None:
+            return _t(request, "error.html", {"officer": _officer(request), "message": "Filing not found."}, 404)
+        text = draft.get("text", "")
+
     return _t(request, "filing_detail.html", {
         "officer": _officer(request),
         "note_id": note_id,

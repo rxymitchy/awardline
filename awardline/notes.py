@@ -244,9 +244,7 @@ def render_note(finding: dict) -> str:
             "-" * 80,
             "",
             f"Snapshot:   Kenya PPIP, {snapshot['award_count']:,} awards",
-            f"Files:      {', '.join(snapshot.get('files') or [])}",
             f"Downloaded: {when}",
-            f"Note:       Run 'python -m awardline refresh' to update the snapshot.",
         ]
     
     lines += [
@@ -270,7 +268,6 @@ def render_note(finding: dict) -> str:
         "",
         "=" * 80,
         "",
-        "Prepared by: Awardline agent (MCP-based procurement analysis tool)",
         f"Approved by: {finding.get('officer') or '[Officer name recorded upon approval]'}",
         "Status:      This note does not award a tender. Officer approval required before filing.",
         "",

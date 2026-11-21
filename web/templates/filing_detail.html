@@ -2,14 +2,25 @@
 {% block title %}Filing {{ note_id[:8] }} · Awardline{% endblock %}
 
 {% block content %}
-<div class="page-narrow">
+<div class="page-narrow" style="max-width:760px;">
+
+  {# ── Top bar ─────────────────────────────────────────────────────────── #}
   <div class="page-heading">
-    <h2>Filed committee note</h2>
-    <a href="/filings" class="btn btn-secondary">← All filings</a>
+    <h2>Committee Note</h2>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <a href="/filings/{{ note_id }}/download"
+         class="btn btn-primary"
+         title="Download as .md file">
+        ⬇ Download
+      </a>
+      <a href="/filings" class="btn btn-secondary">← All filings</a>
+    </div>
   </div>
 
+  {# ── Approval meta bar ───────────────────────────────────────────────── #}
   {% if approval %}
-  <div class="meta-bar">
+  <div class="meta-bar" style="margin-bottom:24px;">
+    <span class="status-badge status-filed" style="margin-bottom:0;margin-right:8px;">✔ Filed</span>
     <span>Approved by <strong>{{ approval.officer }}</strong></span>
     <span class="sep">·</span>
     <span>{{ approval.approved_at[:10] }}</span>
@@ -18,8 +29,210 @@
   </div>
   {% endif %}
 
-  <div class="card">
-    <pre class="note-text">{{ text }}</pre>
+  {# ── Parse note sections from text ──────────────────────────────────── #}
+  {% set lines = text.split('\n') %}
+
+  {# Detect verdict from text #}
+  {% set verdict = '' %}
+  {% for line in lines %}
+    {% if 'PRICE FLAG RAISED' in line and not verdict %}{% set verdict = 'flag' %}{% endif %}
+    {% if 'NO PRICE FLAG' in line and not verdict %}{% set verdict = 'ok' %}{% endif %}
+    {% if 'INSUFFICIENT DATA' in line and not verdict %}{% set verdict = 'warn' %}{% endif %}
+  {% endfor %}
+
+  {# ── Verdict banner ──────────────────────────────────────────────────── #}
+  {% if verdict == 'flag' %}
+  <div class="verdict-banner verdict-flag" style="margin-bottom:24px;">
+    <div class="verdict-icon">🚩</div>
+    <div class="verdict-body"><strong>PRICE FLAG RAISED</strong></div>
   </div>
+  {% elif verdict == 'ok' %}
+  <div class="verdict-banner verdict-ok" style="margin-bottom:24px;">
+    <div class="verdict-icon">✅</div>
+    <div class="verdict-body"><strong>NO PRICE FLAG</strong></div>
+  </div>
+  {% elif verdict == 'warn' %}
+  <div class="verdict-banner verdict-warn" style="margin-bottom:24px;">
+    <div class="verdict-icon">⚠️</div>
+    <div class="verdict-body"><strong>INSUFFICIENT DATA</strong></div>
+  </div>
+  {% endif %}
+
+  {# ── Styled note card ────────────────────────────────────────────────── #}
+  <div class="filed-note-card">
+
+    {# Title block #}
+    <div class="filed-note-header">
+      <div class="filed-note-title">VALUE-FOR-MONEY NOTE</div>
+      <div class="filed-note-meta">
+        <span>Note ID: <span class="mono">{{ note_id }}</span></span>
+        {% if approval %}
+        <span class="sep">·</span>
+        <span>Filed {{ approval.approved_at[:10] }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Render each line, turning section headers into styled blocks #}
+    <div class="filed-note-body">
+    {% set ns = namespace(section='', skip=0) %}
+    {% for line in lines %}
+      {% if '=' * 20 in line %}
+        {# skip divider lines #}
+      {% elif '-' * 20 in line %}
+        {# skip divider lines #}
+      {% elif line.startswith('COMMITTEE VALUE-FOR-MONEY NOTE') %}
+        {# already shown in header #}
+      {% elif line.startswith('Note ID:') or line.startswith('Generated:') %}
+        {# already shown in header #}
+      {% elif line in ['EXECUTIVE SUMMARY', 'QUOTE DETAILS', 'COMPARABLE PPIP AWARDS',
+                       'SUPPLIER HISTORY', 'DATA SOURCE', 'IMPORTANT CAVEATS'] or
+               line.startswith('SUPPLIER HISTORY:') %}
+        <div class="note-section-heading">{{ line }}</div>
+      {% elif line.startswith('PRICE FLAG RAISED') %}
+        <div class="note-verdict-line note-verdict-flag">🚩 {{ line }}</div>
+      {% elif line.startswith('NO PRICE FLAG') %}
+        <div class="note-verdict-line note-verdict-ok">✅ {{ line }}</div>
+      {% elif line.startswith('INSUFFICIENT DATA') %}
+        <div class="note-verdict-line note-verdict-warn">⚠️ {{ line }}</div>
+      {% elif line.startswith('Recommendation:') %}
+        <div class="note-recommendation">{{ line }}</div>
+      {% elif line.startswith('[') and '] ' in line and (line[1:].split(']')[0]).strip().isdigit() %}
+        <div class="note-source-id">{{ line }}</div>
+      {% elif line.startswith('    ') and ':' in line %}
+        {# indented key: value lines inside source blocks #}
+        {% set parts = line.strip().split(':', 1) %}
+        <div class="note-source-row">
+          <span class="note-source-key">{{ parts[0] }}</span>
+          <span class="note-source-val">{% if parts|length > 1 %}{{ parts[1].strip() }}{% endif %}</span>
+        </div>
+      {% elif line.startswith('Approved by:') %}
+        <div class="note-approval-line">✔ {{ line }}</div>
+      {% elif line.startswith('Status:') %}
+        <div class="note-status-line">{{ line }}</div>
+      {% elif line.strip() == '' %}
+        <div class="note-spacer"></div>
+      {% else %}
+        <div class="note-line">{{ line }}</div>
+      {% endif %}
+    {% endfor %}
+    </div>
+
+  </div>{# /filed-note-card #}
+
 </div>
+
+<style>
+/* ── Filed note card ─────────────────────────────────────────────────────── */
+.filed-note-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  overflow: hidden;
+  margin-bottom: 32px;
+}
+
+.filed-note-header {
+  background: #1a56db;
+  color: #fff;
+  padding: 24px 32px 20px;
+}
+.filed-note-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.filed-note-meta {
+  font-size: 13px;
+  opacity: 0.82;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.filed-note-meta .mono { font-family: ui-monospace, monospace; }
+.filed-note-meta .sep { margin: 0 2px; opacity: 0.5; }
+
+.filed-note-body {
+  padding: 28px 32px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+.note-section-heading {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin: 24px 0 12px;
+}
+.note-section-heading:first-child { margin-top: 0; }
+
+.note-verdict-line {
+  font-size: 16px;
+  font-weight: 700;
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+.note-verdict-flag { background: var(--flag-bg); color: #991b1b; }
+.note-verdict-ok   { background: var(--ok-bg);   color: var(--success); }
+.note-verdict-warn { background: var(--warn-bg);  color: var(--warn); }
+
+.note-recommendation {
+  background: #fffbeb;
+  border-left: 3px solid #fbbf24;
+  padding: 10px 14px;
+  margin: 10px 0;
+  border-radius: 0 6px 6px 0;
+  font-size: 14px;
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.note-source-id {
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  margin-top: 14px;
+  margin-bottom: 4px;
+}
+.note-source-row {
+  display: flex;
+  gap: 12px;
+  padding: 2px 0 2px 16px;
+  font-size: 13px;
+}
+.note-source-key {
+  min-width: 72px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.note-source-val {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.note-approval-line {
+  font-weight: 700;
+  color: var(--success);
+  margin-top: 16px;
+}
+.note-status-line {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.note-spacer { height: 6px; }
+.note-line   { margin: 1px 0; }
+</style>
+
 {% endblock %}

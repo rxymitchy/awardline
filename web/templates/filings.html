@@ -4,28 +4,39 @@
 {% block content %}
 <div class="page-wide">
   <div class="page-heading">
-    <h2>My filed notes</h2>
-    <a href="/check" class="btn btn-primary">New check</a>
+    <h2>All filed notes</h2>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <a href="/check" class="btn btn-primary">New check</a>
+      <form method="post" action="/refresh" style="margin:0;">
+        <button type="submit" class="btn btn-secondary" id="refresh-btn" title="Download latest PPIP data">
+          🔄 Refresh PPIP data
+        </button>
+      </form>
+    </div>
   </div>
+
+  {% if refreshing %}
+  <div class="alert alert-warn" id="refresh-banner">
+    Downloading latest PPIP award data… this takes about a minute. The page will update when done.
+  </div>
+  {% endif %}
 
   {% if filed %}
   <table class="data-table data-table-full">
     <thead>
       <tr>
-        <th>Note ID</th>
         <th>Buyer</th>
         <th>Item</th>
         <th class="num">Amount (KES)</th>
         <th>Verdict</th>
-        <th>Officer</th>
-        <th>Filed</th>
+        <th>Filed by</th>
+        <th>Date filed</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
       {% for f in filed %}
-      <tr>
-        <td class="mono small-text">{{ f.note_id[:8] }}…</td>
+      <tr class="{% if f.is_mine %}row-mine{% endif %}">
         <td>{{ f.buyer }}</td>
         <td>{{ f.item }}</td>
         <td class="num">
@@ -34,17 +45,25 @@
         <td>
           {% if f.flagged is not none %}
             {% if f.flagged %}
-            <span class="tag tag-flag">FLAG</span>
+            <span class="tag tag-flag">🚩 FLAG</span>
             {% else %}
-            <span class="tag tag-ok">OK</span>
+            <span class="tag tag-ok">✅ OK</span>
             {% endif %}
           {% else %}
-            <span class="tag">—</span>
+            <span class="tag">⚠️ No data</span>
           {% endif %}
         </td>
-        <td>{{ f.officer }}</td>
+        <td>
+          {{ f.officer }}
+          {% if f.is_mine %}<span class="tag" style="background:#eff6ff;color:var(--primary);margin-left:4px;">you</span>{% endif %}
+        </td>
         <td class="nowrap">{{ f.approved_at }}</td>
-        <td><a href="/filings/{{ f.note_id }}" class="btn btn-secondary btn-sm">View</a></td>
+        <td>
+          <div style="display:flex;gap:6px;">
+            <a href="/filings/{{ f.note_id }}" class="btn btn-secondary btn-sm">View</a>
+            <a href="/filings/{{ f.note_id }}/download" class="btn btn-secondary btn-sm" title="Download as PDF-ready file">⬇ Download</a>
+          </div>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -56,4 +75,36 @@
   </div>
   {% endif %}
 </div>
+
+<style>
+.row-mine { background: #f0f9ff; }
+.row-mine:hover { background: #e0f2fe; }
+</style>
+
+<script>
+// If a refresh was just triggered, poll until done then reload
+{% if refreshing %}
+(function() {
+  const banner = document.getElementById('refresh-banner');
+  function poll() {
+    fetch('/api/refresh/status').then(r => r.json()).then(data => {
+      if (data.status === 'done') {
+        banner.className = 'alert alert-warn';
+        banner.style.background = '#ecfdf5';
+        banner.style.color = '#065f46';
+        banner.style.borderColor = '#86efac';
+        banner.textContent = `✅ PPIP data updated — ${data.award_count?.toLocaleString()} awards as of ${data.retrieved_at}. Reloading…`;
+        setTimeout(() => window.location.href = '/filings', 1500);
+      } else if (data.status === 'error') {
+        banner.className = 'alert alert-error';
+        banner.textContent = '❌ Refresh failed: ' + data.error;
+      } else {
+        setTimeout(poll, 2000);
+      }
+    }).catch(() => setTimeout(poll, 3000));
+  }
+  setTimeout(poll, 2000);
+})();
+{% endif %}
+</script>
 {% endblock %}
