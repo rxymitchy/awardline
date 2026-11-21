@@ -15,15 +15,15 @@ FILINGS = RUNTIME / "filings"
 DRAFTS = RUNTIME / "drafts"
 FLAGS = RUNTIME / "flags"
 APPROVALS = RUNTIME / "approvals"
+RUNS = RUNTIME / "runs"
 
 
 def ensure_runtime() -> None:
     """Create runtime directories. On serverless, uses /tmp."""
     try:
-        for path in (RUNTIME, DRAFTS, FLAGS, APPROVALS, FILINGS, LOGS.parent):
+        for path in (RUNTIME, DRAFTS, FLAGS, APPROVALS, FILINGS, RUNS, LOGS.parent):
             path.mkdir(parents=True, exist_ok=True)
     except (OSError, PermissionError) as e:
-        # Read-only filesystem - log but don't crash
         print(f"Warning: Could not create runtime directories: {e}", file=__import__('sys').stderr)
         pass
 

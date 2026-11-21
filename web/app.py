@@ -36,7 +36,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from awardline.agent import OllamaModel, GroqModel, run_agent
 from awardline.notes import approval_for, draft_for, record_approval
 from awardline.drop import file_committee_note
-from awardline.paths import FILINGS, ensure_runtime
+from awardline.paths import FILINGS, RUNS, ensure_runtime
 
 # ── App setup ──────────────────────────────────────────────────────────────
 
@@ -67,27 +67,71 @@ try:
 except Exception as e:
     print(f"Warning: Could not create runtime directories: {e}", file=sys.stderr)
 
-# ── Agent run tracking ──────────────────────────────────────────────────────
-# In-memory store: run_id → agent state (messages, draft, status)
-# In production, use Redis or a database.
+# ── Agent run tracking ─────────────────────────────────────────────────────
+# Run state is written to runtime/runs/{run_id}.json immediately so it
+# survives server restarts and is visible to every process/worker.
+# The in-memory dict is only a cache to avoid re-reading disk on every poll.
+
+import json as _json
 
 agent_runs: Dict[str, dict] = {}
+
+
+def _run_path(run_id: str):
+    return RUNS / f"{run_id}.json"
+
+
+def _save_run(run_id: str, state: dict) -> None:
+    ensure_runtime()
+    # Don't persist full message list — it's large and not needed after completion.
+    # We persist: status, task, error, and the draft note_id.
+    slim = {
+        "run_id": run_id,
+        "status": state["status"],
+        "task": state.get("task", ""),
+        "error": state.get("error"),
+        "note_id": (state.get("draft") or {}).get("note_id"),
+        "tool_calls": state.get("tool_calls_summary", []),
+    }
+    try:
+        _run_path(run_id).write_text(_json.dumps(slim, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass  # don't crash if disk write fails
+
+
+def _load_run(run_id: str) -> dict | None:
+    # Check memory first
+    if run_id in agent_runs:
+        return agent_runs[run_id]
+    # Fall back to disk
+    path = _run_path(run_id)
+    if path.exists():
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            agent_runs[run_id] = data
+            return data
+        except Exception:
+            pass
+    return None
 
 
 def _start_agent_run(task: str) -> str:
     """Start an agent run in the background, return the run_id."""
     run_id = uuid.uuid4().hex[:12]
-    agent_runs[run_id] = {
+    state = {
+        "run_id": run_id,
         "status": "running",
         "task": task,
         "messages": [],
         "draft": None,
         "error": None,
+        "tool_calls_summary": [],
     }
+    agent_runs[run_id] = state
+    _save_run(run_id, state)
 
     async def _run():
         try:
-            # Choose model: Groq if API key is set, otherwise Ollama
             groq_key = os.environ.get("GROQ_API_KEY")
             if groq_key:
                 print(f"Using Groq model with key: {groq_key[:10]}...", file=sys.stderr)
@@ -95,21 +139,38 @@ def _start_agent_run(task: str) -> str:
             else:
                 print("Using Ollama model (no GROQ_API_KEY set)", file=sys.stderr)
                 model = OllamaModel()
-            
+
             print(f"Starting agent run {run_id} with task: {task[:100]}...", file=sys.stderr)
             result = await asyncio.to_thread(run_agent, task, model)
             print(f"Agent run {run_id} completed. Draft: {bool(result.get('draft'))}, Error: {result.get('error')}", file=sys.stderr)
-            
+
+            # Build a compact tool call summary for the status API
+            tool_calls_summary = []
+            for msg in result.get("messages", []):
+                if msg.get("role") == "tool":
+                    r = msg.get("result") or {}
+                    entry = {"name": msg.get("name"), "ok": r.get("ok", False)}
+                    if msg.get("name") == "search_awards":
+                        entry["count"] = r.get("count")
+                    elif msg.get("name") == "flag_price_outlier":
+                        entry["comparable_count"] = r.get("comparable_count")
+                        entry["flagged"] = r.get("flagged")
+                    tool_calls_summary.append(entry)
+
             agent_runs[run_id]["messages"] = result["messages"]
             agent_runs[run_id]["draft"] = result.get("draft")
-            agent_runs[run_id]["error"] = result.get("error")  # Use the error from agent
+            agent_runs[run_id]["error"] = result.get("error")
+            agent_runs[run_id]["tool_calls_summary"] = tool_calls_summary
             agent_runs[run_id]["status"] = "complete" if result.get("draft") else "failed"
+            _save_run(run_id, agent_runs[run_id])
+
         except Exception as exc:
             print(f"Agent run {run_id} crashed: {exc}", file=sys.stderr)
             import traceback
             traceback.print_exc()
             agent_runs[run_id]["status"] = "failed"
             agent_runs[run_id]["error"] = f"Agent crashed: {str(exc)}"
+            _save_run(run_id, agent_runs[run_id])
 
     asyncio.create_task(_run())
     return run_id
@@ -248,75 +309,52 @@ async def check_submit(
 
 @app.get("/run/{run_id}", response_class=HTMLResponse)
 async def agent_progress(request: Request, run_id: str):
-    """Progress page: polls /api/run/{run_id}/status until complete."""
     redirect = _require_officer(request)
     if redirect:
         return redirect
 
-    run = agent_runs.get(run_id)
+    run = _load_run(run_id)
     if run is None:
         return _t(request, "error.html", {"officer": _officer(request), "message": "Run not found."}, 404)
 
     return _t(request, "progress.html", {
         "officer": _officer(request),
         "run_id": run_id,
-        "task": run["task"],
+        "task": run.get("task", ""),
     })
 
 
 @app.get("/api/run/{run_id}/status")
 async def agent_status_api(request: Request, run_id: str):
-    """API endpoint: poll this to track agent progress."""
-    run = agent_runs.get(run_id)
+    run = _load_run(run_id)
     if run is None:
         return JSONResponse({"status": "not_found"}, status_code=404)
 
-    # Extract tool calls from messages for progress display.
-    tool_calls = []
-    for msg in run["messages"]:
-        if msg.get("role") == "tool":
-            result = msg.get("result") or {}
-            entry = {
-                "name": msg.get("name"),
-                "ok": result.get("ok", False),
-            }
-            # Pass through useful context for the progress UI.
-            if msg.get("name") == "search_awards":
-                entry["count"] = result.get("count")
-            elif msg.get("name") == "flag_price_outlier":
-                entry["comparable_count"] = result.get("comparable_count")
-                entry["flagged"] = result.get("flagged")
-            tool_calls.append(entry)
+    tool_calls = run.get("tool_calls_summary") or []
+    # If still in memory (run in progress), rebuild from messages
+    if run_id in agent_runs and agent_runs[run_id].get("messages"):
+        tool_calls = []
+        for msg in agent_runs[run_id]["messages"]:
+            if msg.get("role") == "tool":
+                r = msg.get("result") or {}
+                entry = {"name": msg.get("name"), "ok": r.get("ok", False)}
+                if msg.get("name") == "search_awards":
+                    entry["count"] = r.get("count")
+                elif msg.get("name") == "flag_price_outlier":
+                    entry["comparable_count"] = r.get("comparable_count")
+                    entry["flagged"] = r.get("flagged")
+                tool_calls.append(entry)
 
-    response = {
-        "status": run["status"],
-        "tool_calls": tool_calls,
-    }
+    response = {"status": run["status"], "tool_calls": tool_calls}
 
-    if run["status"] == "complete" and run["draft"]:
-        response["note_id"] = run["draft"]["note_id"]
+    if run["status"] == "complete":
+        note_id = run.get("note_id") or (run.get("draft") or {}).get("note_id")
+        if note_id:
+            response["note_id"] = note_id
     elif run["status"] == "failed":
         response["error"] = run.get("error", "Unknown error")
 
     return JSONResponse(response)
-
-
-@app.get("/api/run/{run_id}/debug")
-async def agent_debug_api(request: Request, run_id: str):
-    """Debug endpoint to see full agent state."""
-    run = agent_runs.get(run_id)
-    if run is None:
-        return JSONResponse({"status": "not_found"}, status_code=404)
-    
-    # Return full state for debugging
-    return JSONResponse({
-        "status": run["status"],
-        "task": run["task"],
-        "error": run.get("error"),
-        "message_count": len(run["messages"]),
-        "messages": run["messages"][-5:] if run["messages"] else [],  # Last 5 messages
-        "draft": run.get("draft"),
-    })
 
 
 @app.get("/note/{note_id}", response_class=HTMLResponse)
@@ -334,21 +372,23 @@ async def note_detail(request: Request, note_id: str):
     already_filed = (FILINGS / f"{note_id}.md").exists()
 
     # Find agent run for this note_id to show tool history
-    agent_run = None
-    for run in agent_runs.values():
-        if run.get("draft", {}).get("note_id") == note_id:
-            agent_run = run
-            break
-
-    # Extract tool call summary
     tool_history = []
-    if agent_run:
-        for msg in agent_run.get("messages", []):
-            if msg.get("role") == "tool":
-                tool_history.append({
-                    "name": msg.get("name"),
-                    "ok": msg.get("result", {}).get("ok", False),
-                })
+    # Check in-memory first, then scan disk runs
+    for run in agent_runs.values():
+        if (run.get("draft") or {}).get("note_id") == note_id or run.get("note_id") == note_id:
+            tool_history = run.get("tool_calls_summary") or []
+            break
+    if not tool_history:
+        # Scan disk runs for this note_id
+        ensure_runtime()
+        for rpath in RUNS.glob("*.json"):
+            try:
+                rdata = _json.loads(rpath.read_text(encoding="utf-8"))
+                if rdata.get("note_id") == note_id:
+                    tool_history = rdata.get("tool_calls", []) or rdata.get("tool_calls_summary", [])
+                    break
+            except Exception:
+                pass
 
     return _t(request, "note.html", {
         "officer": _officer(request),

@@ -4,11 +4,18 @@ node_modules/
 __pycache__/
 .pytest_cache/
 *.pyc
-runtime/
 logs/
-filings/
 data/raw/
 data/ppip-*.json
 evals/results.json
 data/*.part
 .env
+
+# Keep the runtime folder structure in git (via .gitkeep files)
+# but ignore the actual data files written at runtime
+runtime/drafts/*.json
+runtime/flags/*.json
+runtime/approvals/*.json
+runtime/filings/*.md
+runtime/runs/*.json
+runtime/logs/*.jsonl
